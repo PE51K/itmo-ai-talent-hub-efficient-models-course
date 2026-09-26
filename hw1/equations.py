@@ -1,8 +1,11 @@
+from functools import reduce
+
+import numpy as np
 import torch
 import torch.nn as nn
 
 
-def flops_per_conv(S: int, B: int, pad: int, stride: int, k: int, in_ch: int, out_ch: int) -> int:
+def flops_per_conv(S: int | np.ndarray, B: int | np.ndarray, pad: int, stride: int, k: int, in_ch: int, out_ch: int) -> int | np.ndarray:
     """
     Calc flops per Conv2d layer
 
@@ -22,7 +25,7 @@ def flops_per_conv(S: int, B: int, pad: int, stride: int, k: int, in_ch: int, ou
     ) * out_ch * B # repeat per each item in batch and per each kernel
 
 
-def fllops_per_max_pool(S: int, B: int, pad: int, stride: int, k: int, in_ch: int) -> int:
+def fllops_per_max_pool(S: int | np.ndarray, B: int | np.ndarray, pad: int, stride: int, k: int, in_ch: int) -> int | np.ndarray:
     """
     Calc flops per MaxPool2d layer
 
@@ -41,7 +44,7 @@ def fllops_per_max_pool(S: int, B: int, pad: int, stride: int, k: int, in_ch: in
     ) * in_ch * B # repeat per each item in batch and per each channel
 
 
-def flops_per_relu(S: int, B: int, in_ch: int) -> int:
+def flops_per_relu(S: int | np.ndarray, B: int | np.ndarray, in_ch: int) -> int | np.ndarray:
     """
     Calc flops per ReLU layer
 
@@ -55,7 +58,7 @@ def flops_per_relu(S: int, B: int, in_ch: int) -> int:
     ) * B # repeat per each item in batch
 
 
-def flops_per_avg_pool(S: int, B: int, in_ch: int) -> int:
+def flops_per_avg_pool(S: int | np.ndarray, B: int | np.ndarray, in_ch: int) -> int | np.ndarray:
     """
     Calc flops per AvgPool2d layer
 
@@ -69,7 +72,7 @@ def flops_per_avg_pool(S: int, B: int, in_ch: int) -> int:
     ) * in_ch * B # repeat per each channel in each item in batch
 
 
-def flops_per_linear(B: int, in_ch: int, out_ch: int) -> int:
+def flops_per_linear(B: int | np.ndarray, in_ch: int, out_ch: int) -> int | np.ndarray:
     """
     Calc flops per Linear layer (with bias)
 
@@ -83,13 +86,13 @@ def flops_per_linear(B: int, in_ch: int, out_ch: int) -> int:
     ) * out_ch * B # repeat per item in batch
 
 
-def flops(image_size, batch):
+def flops(image_size: int | np.ndarray, batch: int | np.ndarray) -> int | np.ndarray:
     """
     Calc flops per one forward pass of model from models.py
 
     Args:
-        image_size: input shape (w & h, only w=h supported), int or np.ndarray
-        batch: batch size, int or np.ndarray
+        image_size: input shape (w & h, only w=h supported)
+        batch: batch size
     """
     S, B = image_size, batch
     return (
@@ -110,4 +113,157 @@ def flops(image_size, batch):
         + flops_per_linear(B, in_ch=512, out_ch=256)
         + flops_per_relu(1, B, in_ch=256)
         + flops_per_linear(B, in_ch=256, out_ch=100)
+    )
+
+
+def params_memory_per_conv(k: int, in_ch: int, out_ch: int) -> int:
+    """
+    Calc memory (bytes) of Conv2d weights (without bias)
+
+    Args:
+        k: kernel size
+        in_ch: num of input chanels
+        out_ch: num of output chanels
+    """
+    return (
+        in_ch * k ** 2 # weights per one kernel
+    ) * out_ch * 4 # repeat per each kernel, 4 bytes per fp32
+
+
+def params_memory_per_linear(in_ch: int, out_ch: int) -> int:
+    """
+    Calc memory (bytes) of Linear weights (with bias)
+
+    Args:
+        in_ch: num of input chanels
+        out_ch: num of output chanels
+    """
+    return (
+        in_ch * out_ch + out_ch # weights + bias
+    ) * 4 # 4 bytes per fp32
+
+
+def memory_per_conv_forward(S: int | np.ndarray, B: int | np.ndarray, pad: int, stride: int, k: int, in_ch: int, out_ch: int) -> int | np.ndarray:
+    """
+    Calc memory (bytes) allocated by tensors during Conv2d forward (input + output)
+
+    Args:
+        S: input shape (w & h, only w=h supported)
+        B: batch size
+        pad: padding size
+        stride: stride size
+        k: kernel size
+        in_ch: num of input chanels
+        out_ch: num of output chanels
+    """
+    return (
+        in_ch * S ** 2 # input values in one item
+        + out_ch * ((S + 2 * pad - k) // stride + 1) ** 2 # output values in one item
+    ) * B * 4 # repeat per each item in batch, 4 bytes per fp32
+
+
+def memory_per_max_pool_forward(S: int | np.ndarray, B: int | np.ndarray, pad: int, stride: int, k: int, in_ch: int) -> int | np.ndarray:
+    """
+    Calc memory (bytes) allocated by tensors during MaxPool2d forward (input + output)
+
+    Args:
+        S: input shape (w & h, only w=h supported)
+        B: batch size
+        pad: padding size
+        stride: stride size
+        k: kernel size
+        in_ch: num of input chanels
+    """
+    return (
+        S ** 2 # input values in one channel
+        + ((S + 2 * pad - k) // stride + 1) ** 2 # output values in one channel
+    ) * in_ch * B * 4 # repeat per each channel in each item in batch, 4 bytes per fp32
+
+
+def memory_per_relu_forward(S: int | np.ndarray, B: int | np.ndarray, in_ch: int) -> int | np.ndarray:
+    """
+    Calc memory (bytes) allocated by tensors during ReLU forward (inplace, so input only)
+
+    Args:
+        S: input shape (w & h, only w=h supported)
+        B: batch size
+        in_ch: num of input chanels
+    """
+    return (
+        in_ch * S ** 2 # values in one item, output shares input storage
+    ) * B * 4 # repeat per each item in batch, 4 bytes per fp32
+
+
+def memory_per_avg_pool_forward(S: int | np.ndarray, B: int | np.ndarray, in_ch: int) -> int | np.ndarray:
+    """
+    Calc memory (bytes) allocated by tensors during AvgPool2d forward (input + output)
+
+    Args:
+        S: input shape (w & h, only w=h supported)
+        B: batch size
+        in_ch: num of input chanels
+    """
+    return (
+        S ** 2 + 1 # input values + 1 output value in one channel (global pool)
+    ) * in_ch * B * 4 # repeat per each channel in each item in batch, 4 bytes per fp32
+
+
+def memory_per_linear_forward(B: int | np.ndarray, in_ch: int, out_ch: int) -> int | np.ndarray:
+    """
+    Calc memory (bytes) allocated by tensors during Linear forward (input + output)
+
+    Args:
+        B: batch size
+        in_ch: num of input chanels
+        out_ch: num of output chanels
+    """
+    return (
+        in_ch + out_ch # input + output values in one item
+    ) * B * 4 # repeat per each item in batch, 4 bytes per fp32
+
+
+def memory(image_size: int | np.ndarray, batch: int | np.ndarray) -> int | np.ndarray:
+    """
+    Calc max allocated memory per one forward pass of model from models.py
+
+    Args:
+        image_size: input shape (w & h, only w=h supported)
+        batch: batch size
+    """
+    S, B = image_size, batch
+    params = (
+        params_memory_per_conv(k=7, in_ch=3, out_ch=32)
+        + params_memory_per_conv(k=5, in_ch=32, out_ch=64)
+        + params_memory_per_conv(k=3, in_ch=64, out_ch=128)
+        + params_memory_per_conv(k=1, in_ch=128, out_ch=256)
+        + params_memory_per_conv(k=3, in_ch=256, out_ch=256)
+        + params_memory_per_conv(k=1, in_ch=256, out_ch=512)
+        + params_memory_per_linear(in_ch=512, out_ch=256)
+        + params_memory_per_linear(in_ch=256, out_ch=100)
+    )
+    # Caller keeps a reference to the input batch, so its storage isn't freed after the 1st layer
+    x = (
+        3 * S ** 2 # input values in one item
+    ) * B * 4 # repeat per each item in batch, 4 bytes per fp32
+    # np.maximum instead of max() to keep NumPy broadcasting
+    return params + np.maximum(
+        memory_per_conv_forward(S, B, pad=3, stride=2, k=7, in_ch=3, out_ch=32), # input tensor is x
+        x + reduce(np.maximum, [
+            memory_per_max_pool_forward(S // 2, B, pad=1, stride=2, k=3, in_ch=32),
+            memory_per_relu_forward(S // 4, B, in_ch=32),
+            memory_per_conv_forward(S // 4, B, pad=2, stride=1, k=5, in_ch=32, out_ch=64),
+            memory_per_relu_forward(S // 4, B, in_ch=64),
+            memory_per_conv_forward(S // 4, B, pad=1, stride=2, k=3, in_ch=64, out_ch=128),
+            memory_per_relu_forward(S // 8, B, in_ch=128),
+            memory_per_conv_forward(S // 8, B, pad=0, stride=1, k=1, in_ch=128, out_ch=256),
+            memory_per_relu_forward(S // 8, B, in_ch=256),
+            memory_per_conv_forward(S // 8, B, pad=1, stride=2, k=3, in_ch=256, out_ch=256),
+            memory_per_relu_forward(S // 16, B, in_ch=256),
+            memory_per_conv_forward(S // 16, B, pad=0, stride=1, k=1, in_ch=256, out_ch=512),
+            memory_per_relu_forward(S // 16, B, in_ch=512),
+            memory_per_avg_pool_forward(S // 16, B, in_ch=512), # Flatten returns a view, no new allocation
+            memory_per_linear_forward(B, in_ch=512, out_ch=256),
+            memory_per_relu_forward(1, B, in_ch=256),
+            memory_per_linear_forward(B, in_ch=256, out_ch=100),
+        ]),
     )
