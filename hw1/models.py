@@ -5,6 +5,10 @@ import torch.nn as nn
 def get_model(S: int, device: torch.Device = "cpu") -> nn.Sequential:
     """
     Construct model from hw1 as nn.Sequential
+
+    Args:
+        S: input shape (w & h, only w=h supported)
+        device: cpu or cuda
     """
     # Check that shape is divisable by 16
     if S % 16 != 0:
