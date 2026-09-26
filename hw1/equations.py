@@ -267,3 +267,206 @@ def memory(image_size: int | np.ndarray, batch: int | np.ndarray) -> int | np.nd
             memory_per_linear_forward(B, in_ch=256, out_ch=100),
         ]),
     )
+
+
+def bytes_moved_per_conv(S: int | np.ndarray, B: int | np.ndarray, pad: int, stride: int, k: int, in_ch: int, out_ch: int) -> int | np.ndarray:
+    """
+    Calc DRAM traffic (bytes) of Conv2d kernel (without bias), assuming each element is read/written once
+
+    Args:
+        S: input shape (w & h, only w=h supported)
+        B: batch size
+        pad: padding size
+        stride: stride size
+        k: kernel size
+        in_ch: num of input chanels
+        out_ch: num of output chanels
+    """
+    return (
+        (
+            in_ch * S ** 2 # read input values in one item, padding zeros aren't stored
+            + out_ch * ((S + 2 * pad - k) // stride + 1) ** 2 # write output values in one item
+        ) * B # repeat per each item in batch
+        + (in_ch * k ** 2) * out_ch # read weights once, independent of batch
+    ) * 4 # 4 bytes per fp32
+
+
+def bytes_moved_per_max_pool(S: int | np.ndarray, B: int | np.ndarray, pad: int, stride: int, k: int, in_ch: int) -> int | np.ndarray:
+    """
+    Calc DRAM traffic (bytes) of MaxPool2d kernel, assuming each element is read/written once
+
+    Args:
+        S: input shape (w & h, only w=h supported)
+        B: batch size
+        pad: padding size
+        stride: stride size
+        k: kernel size
+        in_ch: num of input chanels
+    """
+    return (
+        S ** 2 # read input values in one channel, overlapping windows hit L2
+        + ((S + 2 * pad - k) // stride + 1) ** 2 # write output values in one channel
+    ) * in_ch * B * 4 # repeat per each channel in each item in batch, 4 bytes per fp32
+
+
+def bytes_moved_per_relu(S: int | np.ndarray, B: int | np.ndarray, in_ch: int) -> int | np.ndarray:
+    """
+    Calc DRAM traffic (bytes) of ReLU kernel (inplace saves allocation, not traffic)
+
+    Args:
+        S: input shape (w & h, only w=h supported)
+        B: batch size
+        in_ch: num of input chanels
+    """
+    return (
+        2 * in_ch * S ** 2 # read + write back values in one item
+    ) * B * 4 # repeat per each item in batch, 4 bytes per fp32
+
+
+def bytes_moved_per_avg_pool(S: int | np.ndarray, B: int | np.ndarray, in_ch: int) -> int | np.ndarray:
+    """
+    Calc DRAM traffic (bytes) of AvgPool2d kernel (global pool)
+
+    Args:
+        S: input shape (w & h, only w=h supported)
+        B: batch size
+        in_ch: num of input chanels
+    """
+    return (
+        S ** 2 + 1 # read input values + write 1 output value in one channel
+    ) * in_ch * B * 4 # repeat per each channel in each item in batch, 4 bytes per fp32
+
+
+def bytes_moved_per_linear(B: int | np.ndarray, in_ch: int, out_ch: int) -> int | np.ndarray:
+    """
+    Calc DRAM traffic (bytes) of Linear kernel (with bias), assuming each element is read/written once
+
+    Args:
+        B: batch size
+        in_ch: num of input chanels
+        out_ch: num of output chanels
+    """
+    return (
+        (in_ch + out_ch) * B # read input + write output values, repeat per each item in batch
+        + in_ch * out_ch + out_ch # read weights + bias once, independent of batch
+    ) * 4 # 4 bytes per fp32
+
+
+def kernels(S: int | np.ndarray, B: int | np.ndarray) -> list[tuple[int | np.ndarray, int | np.ndarray]]:
+    """
+    Calc (flops, bytes moved) per each CUDA kernel launched in one forward pass of model from models.py
+
+    Args:
+        S: input shape (w & h, only w=h supported)
+        B: batch size
+    """
+    return [
+        (
+            flops_per_conv(S, B, pad=3, stride=2, k=7, in_ch=3, out_ch=32),
+            bytes_moved_per_conv(S, B, pad=3, stride=2, k=7, in_ch=3, out_ch=32),
+        ),
+        (
+            fllops_per_max_pool(S // 2, B, pad=1, stride=2, k=3, in_ch=32),
+            bytes_moved_per_max_pool(S // 2, B, pad=1, stride=2, k=3, in_ch=32),
+        ),
+        (
+            flops_per_relu(S // 4, B, in_ch=32),
+            bytes_moved_per_relu(S // 4, B, in_ch=32),
+        ),
+        (
+            flops_per_conv(S // 4, B, pad=2, stride=1, k=5, in_ch=32, out_ch=64),
+            bytes_moved_per_conv(S // 4, B, pad=2, stride=1, k=5, in_ch=32, out_ch=64),
+        ),
+        (
+            flops_per_relu(S // 4, B, in_ch=64),
+            bytes_moved_per_relu(S // 4, B, in_ch=64),
+        ),
+        (
+            flops_per_conv(S // 4, B, pad=1, stride=2, k=3, in_ch=64, out_ch=128),
+            bytes_moved_per_conv(S // 4, B, pad=1, stride=2, k=3, in_ch=64, out_ch=128),
+        ),
+        (
+            flops_per_relu(S // 8, B, in_ch=128),
+            bytes_moved_per_relu(S // 8, B, in_ch=128),
+        ),
+        (
+            flops_per_conv(S // 8, B, pad=0, stride=1, k=1, in_ch=128, out_ch=256),
+            bytes_moved_per_conv(S // 8, B, pad=0, stride=1, k=1, in_ch=128, out_ch=256),
+        ),
+        (
+            flops_per_relu(S // 8, B, in_ch=256),
+            bytes_moved_per_relu(S // 8, B, in_ch=256),
+        ),
+        (
+            flops_per_conv(S // 8, B, pad=1, stride=2, k=3, in_ch=256, out_ch=256),
+            bytes_moved_per_conv(S // 8, B, pad=1, stride=2, k=3, in_ch=256, out_ch=256),
+        ),
+        (
+            flops_per_relu(S // 16, B, in_ch=256),
+            bytes_moved_per_relu(S // 16, B, in_ch=256),
+        ),
+        (
+            flops_per_conv(S // 16, B, pad=0, stride=1, k=1, in_ch=256, out_ch=512),
+            bytes_moved_per_conv(S // 16, B, pad=0, stride=1, k=1, in_ch=256, out_ch=512),
+        ),
+        (
+            flops_per_relu(S // 16, B, in_ch=512),
+            bytes_moved_per_relu(S // 16, B, in_ch=512),
+        ),
+        (
+            flops_per_avg_pool(S // 16, B, in_ch=512),
+            bytes_moved_per_avg_pool(S // 16, B, in_ch=512),
+        ),
+        # Flatten returns a view, no kernel launch
+        (
+            flops_per_linear(B, in_ch=512, out_ch=256),
+            bytes_moved_per_linear(B, in_ch=512, out_ch=256),
+        ),
+        (
+            flops_per_relu(1, B, in_ch=256),
+            bytes_moved_per_relu(1, B, in_ch=256),
+        ),
+        (
+            flops_per_linear(B, in_ch=256, out_ch=100),
+            bytes_moved_per_linear(B, in_ch=256, out_ch=100),
+        ),
+    ]
+
+
+def latency(image_size: int | np.ndarray, batch: int | np.ndarray, theta: dict[str, float]) -> float | np.ndarray:
+    """
+    Calc latency (seconds) of one forward pass of model from models.py, roofline per each kernel + launch overhead
+
+    Args:
+        image_size: input shape (w & h, only w=h supported)
+        batch: batch size
+        theta: t_launch (seconds per kernel launch), flops_per_s (effective compute throughput), bytes_per_s (effective DRAM bandwidth)
+    """
+    S, B = image_size, batch
+    return sum(
+        theta["t_launch"] # fixed overhead per kernel launch, dominates in launch-bound regime
+        + np.maximum(
+            f / theta["flops_per_s"], # compute-bound time
+            m / theta["bytes_per_s"], # memory-bound time
+        ) # compute and memory traffic overlap inside kernel, so the slower one wins
+        for f, m in kernels(S, B)
+    )
+
+
+def energy(image_size: int | np.ndarray, batch: int | np.ndarray, theta_energy: dict[str, float | dict[str, float]]) -> float | np.ndarray:
+    """
+    Calc energy (joules) of one forward pass of model from models.py, measured on the whole GPU
+
+    Args:
+        image_size: input shape (w & h, only w=h supported)
+        batch: batch size
+        theta_energy: j_per_flop (dynamic energy per flop), j_per_byte (dynamic energy per DRAM byte),
+            p_static (watts drawn by whole GPU regardless of load), theta (latency params, see latency())
+    """
+    S, B = image_size, batch
+    ks = kernels(S, B)
+    return (
+        theta_energy["j_per_flop"] * sum(f for f, _ in ks) # dynamic energy of compute
+        + theta_energy["j_per_byte"] * sum(m for _, m in ks) # dynamic energy of DRAM traffic
+        + theta_energy["p_static"] * latency(S, B, theta_energy["theta"]) # static power over pass duration
+    )
