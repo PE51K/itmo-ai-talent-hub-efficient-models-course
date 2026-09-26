@@ -1,10 +1,10 @@
 # HW1: analytical performance model of a small CNN
 
-Derivations are in `hw1_handwritten.pdf`, the equations are in `equations.py`.
+Derivations are in [`hw1_handwritten.pdf`](hw1_handwritten.pdf), the network is in [`models.py`](models.py), the equations are in [`equations.py`](equations.py).
 
 ## Environment
 
-Google Colab, Tesla T4 (14.56 GiB), driver 580.82.07, CUDA 12.8, cuDNN 9.19.0, PyTorch 2.11.0+cu128, Python 3.13.15. Full record in `results/env.json`.
+Google Colab, Tesla T4 (14.56 GiB), driver 580.82.07, CUDA 12.8, cuDNN 9.19.0, PyTorch 2.11.0+cu128, Python 3.13.15. Full record in [`results/env.json`](results/env.json).
 
 ## Reproduce
 
@@ -18,6 +18,8 @@ On Colab with a T4 runtime:
 !python calibrate.py  # results/theta.json
 !python plots.py      # results/figures/*.png
 ```
+
+[`measure.py`](measure.py) writes [`results/measurements.csv`](results/measurements.csv), [`calibrate.py`](calibrate.py) writes [`results/theta.json`](results/theta.json), [`plots.py`](plots.py) writes [`results/figures/`](results/figures).
 
 ## Results
 
