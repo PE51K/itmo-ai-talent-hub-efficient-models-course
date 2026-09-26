@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 
 
-def get_model(S: int, device: torch.Device = "cpu") -> nn.Sequential:
+def get_model(S: int, device: torch.device | str = "cpu") -> nn.Sequential:
     """
     Construct model from hw1 as nn.Sequential
 
