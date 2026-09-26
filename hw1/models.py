@@ -23,13 +23,13 @@ def get_model(S: int, device: torch.device | str = "cpu") -> nn.Sequential:
             padding=3,
             bias=False,
         ), # -> (B, 32, S/2, S/2)
+        nn.ReLU(
+            inplace=True,
+        ), # -> (B, 32, S/2, S/2)
         nn.MaxPool2d(
             kernel_size=3,
             stride=2,
             padding=1,
-        ), # -> (B, 32, S/4, S/4)
-        nn.ReLU(
-            inplace=True,
         ), # -> (B, 32, S/4, S/4)
         nn.Conv2d(
             in_channels=32,

@@ -97,8 +97,8 @@ def flops(image_size: int | np.ndarray, batch: int | np.ndarray) -> int | np.nda
     S, B = image_size, batch
     return (
         flops_per_conv(S, B, pad=3, stride=2, k=7, in_ch=3, out_ch=32) # -> S/2
+        + flops_per_relu(S // 2, B, in_ch=32)
         + fllops_per_max_pool(S // 2, B, pad=1, stride=2, k=3, in_ch=32) # -> S/4
-        + flops_per_relu(S // 4, B, in_ch=32)
         + flops_per_conv(S // 4, B, pad=2, stride=1, k=5, in_ch=32, out_ch=64)
         + flops_per_relu(S // 4, B, in_ch=64)
         + flops_per_conv(S // 4, B, pad=1, stride=2, k=3, in_ch=64, out_ch=128) # -> S/8
@@ -164,7 +164,7 @@ def memory_per_conv_forward(S: int | np.ndarray, B: int | np.ndarray, pad: int, 
 
 def memory_per_max_pool_forward(S: int | np.ndarray, B: int | np.ndarray, pad: int, stride: int, k: int, in_ch: int) -> int | np.ndarray:
     """
-    Calc memory (bytes) allocated by tensors during MaxPool2d forward (input + output)
+    Calc memory (bytes) allocated by tensors during MaxPool2d forward (input + output + indices)
 
     Args:
         S: input shape (w & h, only w=h supported)
@@ -174,10 +174,13 @@ def memory_per_max_pool_forward(S: int | np.ndarray, B: int | np.ndarray, pad: i
         k: kernel size
         in_ch: num of input chanels
     """
+    # On CUDA max_pool2d always runs max_pool2d_with_indices, so int64 indices are allocated even in inference
+    out = ((S + 2 * pad - k) // stride + 1) ** 2 # output values in one channel
     return (
-        S ** 2 # input values in one channel
-        + ((S + 2 * pad - k) // stride + 1) ** 2 # output values in one channel
-    ) * in_ch * B * 4 # repeat per each channel in each item in batch, 4 bytes per fp32
+        S ** 2 * 4 # input values in one channel, 4 bytes per fp32
+        + out * 4 # output values, 4 bytes per fp32
+        + out * 8 # indices, 8 bytes per int64
+    ) * in_ch * B # repeat per each channel in each item in batch
 
 
 def memory_per_relu_forward(S: int | np.ndarray, B: int | np.ndarray, in_ch: int) -> int | np.ndarray:
@@ -245,12 +248,14 @@ def memory(image_size: int | np.ndarray, batch: int | np.ndarray) -> int | np.nd
     x = (
         3 * S ** 2 # input values in one item
     ) * B * 4 # repeat per each item in batch, 4 bytes per fp32
+    # cuBLAS workspace for Linear, taken from caching allocator on 1st matmul and kept (4096 KiB * 2 + 16 KiB * 8 below sm_90)
+    cublas_workspace = 4096 * 1024 * 2 + 16 * 1024 * 8
     # np.maximum instead of max() to keep NumPy broadcasting
-    return params + np.maximum(
+    return params + cublas_workspace + np.maximum(
         memory_per_conv_forward(S, B, pad=3, stride=2, k=7, in_ch=3, out_ch=32), # input tensor is x
         x + reduce(np.maximum, [
+            memory_per_relu_forward(S // 2, B, in_ch=32),
             memory_per_max_pool_forward(S // 2, B, pad=1, stride=2, k=3, in_ch=32),
-            memory_per_relu_forward(S // 4, B, in_ch=32),
             memory_per_conv_forward(S // 4, B, pad=2, stride=1, k=5, in_ch=32, out_ch=64),
             memory_per_relu_forward(S // 4, B, in_ch=64),
             memory_per_conv_forward(S // 4, B, pad=1, stride=2, k=3, in_ch=64, out_ch=128),
@@ -293,7 +298,7 @@ def bytes_moved_per_conv(S: int | np.ndarray, B: int | np.ndarray, pad: int, str
 
 def bytes_moved_per_max_pool(S: int | np.ndarray, B: int | np.ndarray, pad: int, stride: int, k: int, in_ch: int) -> int | np.ndarray:
     """
-    Calc DRAM traffic (bytes) of MaxPool2d kernel, assuming each element is read/written once
+    Calc DRAM traffic (bytes) of MaxPool2d kernel (input + output + indices), assuming each element is read/written once
 
     Args:
         S: input shape (w & h, only w=h supported)
@@ -303,10 +308,12 @@ def bytes_moved_per_max_pool(S: int | np.ndarray, B: int | np.ndarray, pad: int,
         k: kernel size
         in_ch: num of input chanels
     """
+    out = ((S + 2 * pad - k) // stride + 1) ** 2 # output values in one channel
     return (
-        S ** 2 # read input values in one channel, overlapping windows hit L2
-        + ((S + 2 * pad - k) // stride + 1) ** 2 # write output values in one channel
-    ) * in_ch * B * 4 # repeat per each channel in each item in batch, 4 bytes per fp32
+        S ** 2 * 4 # read input values, overlapping windows hit L2, 4 bytes per fp32
+        + out * 4 # write output values, 4 bytes per fp32
+        + out * 8 # write indices, max_pool2d_with_indices runs on CUDA, 8 bytes per int64
+    ) * in_ch * B # repeat per each channel in each item in batch
 
 
 def bytes_moved_per_relu(S: int | np.ndarray, B: int | np.ndarray, in_ch: int) -> int | np.ndarray:
@@ -366,12 +373,12 @@ def kernels(S: int | np.ndarray, B: int | np.ndarray) -> list[tuple[int | np.nda
             bytes_moved_per_conv(S, B, pad=3, stride=2, k=7, in_ch=3, out_ch=32),
         ),
         (
-            fllops_per_max_pool(S // 2, B, pad=1, stride=2, k=3, in_ch=32),
-            bytes_moved_per_max_pool(S // 2, B, pad=1, stride=2, k=3, in_ch=32),
+            flops_per_relu(S // 2, B, in_ch=32),
+            bytes_moved_per_relu(S // 2, B, in_ch=32),
         ),
         (
-            flops_per_relu(S // 4, B, in_ch=32),
-            bytes_moved_per_relu(S // 4, B, in_ch=32),
+            fllops_per_max_pool(S // 2, B, pad=1, stride=2, k=3, in_ch=32),
+            bytes_moved_per_max_pool(S // 2, B, pad=1, stride=2, k=3, in_ch=32),
         ),
         (
             flops_per_conv(S // 4, B, pad=2, stride=1, k=5, in_ch=32, out_ch=64),

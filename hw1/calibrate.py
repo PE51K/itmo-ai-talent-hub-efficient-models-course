@@ -7,13 +7,15 @@ from equations import energy, kernels, latency, memory
 from results_io import RESULTS, load_measurements
 
 
-# Initial guess from Tesla T4 datasheet: ~8 TFLOP/s FP32, ~320 GB/s GDDR6, ~10 us per eager kernel launch
-THETA_0 = {"t_launch": 1e-5, "flops_per_s": 8e12, "bytes_per_s": 3.2e11}
+# Initial guess from Tesla T4 datasheet: ~8 TFLOP/s FP32, ~10 us per eager kernel launch
+THETA_0 = {"t_launch": 1e-5, "flops_per_s": 8e12}
+# Tesla T4 datasheet GDDR6 bandwidth, fixed: F_i and M_i both scale as S^2 * B, so latency data can't separate flops_per_s from bytes_per_s
+BYTES_PER_S = 3.2e11
 
 
 def fit_latency(S: np.ndarray, B: np.ndarray, measured: np.ndarray) -> dict[str, float]:
     """
-    Fit latency theta by least squares on log(latency), so ms-scale and 100 ms-scale configs weigh the same
+    Fit t_launch and flops_per_s by least squares on log(latency), so ms-scale and 100 ms-scale configs weigh the same, bytes_per_s is fixed
 
     Args:
         S: image sizes of fitting configs
@@ -29,11 +31,11 @@ def fit_latency(S: np.ndarray, B: np.ndarray, measured: np.ndarray) -> dict[str,
         Args:
             log_theta: log of latency theta values, in THETA_0 keys order
         """
-        theta = dict(zip(keys, np.exp(log_theta))) # log params keep theta positive and well scaled
+        theta = dict(zip(keys, np.exp(log_theta)), bytes_per_s=BYTES_PER_S) # log params keep theta positive and well scaled
         return np.log(latency(S, B, theta)) - np.log(measured)
 
     fit = least_squares(residuals, np.log([THETA_0[k] for k in keys]))
-    return {k: float(v) for k, v in zip(keys, np.exp(fit.x))}
+    return {**{k: float(v) for k, v in zip(keys, np.exp(fit.x))}, "bytes_per_s": BYTES_PER_S}
 
 
 def fit_energy(S: np.ndarray, B: np.ndarray, measured: np.ndarray, theta: dict[str, float]) -> dict[str, float | dict[str, float]]:
@@ -88,10 +90,6 @@ def main() -> None:
     print(f"{'metric':<8} {'MAPE fit %':>11} {'MAPE val %':>11}")
     for name in pred:
         print(f"{name:<8} {mape(pred[name][fit], m[name][fit]):>11.2f} {mape(pred[name][val], m[name][val]):>11.2f}")
-
-    ok = ~m["oom"]
-    gap = m["memory"][ok] - pred["memory"][ok]
-    print(f"memory: measured - memory() in [{gap.min() / 2**20:.1f}, {gap.max() / 2**20:.1f}] MiB (cuDNN/cuBLAS workspace)")
 
     # OOM boundary: memory() above total VRAM should coincide with measured OOM
     total = json.loads((RESULTS / "env.json").read_text())["gpu_total_memory"]
