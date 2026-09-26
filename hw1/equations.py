@@ -3,12 +3,25 @@ from functools import reduce
 import numpy as np
 
 
-def flops_per_conv(S: int | np.ndarray, B: int | np.ndarray, pad: int, stride: int, k: int, in_ch: int, out_ch: int) -> int | np.ndarray:
+def out_size(s: int | np.ndarray, pad: int, stride: int, k: int) -> int | np.ndarray:
+    """
+    Calc output size of Conv2d / MaxPool2d layer (= s / stride, since pad = k // 2, k is odd and s is divisible by stride)
+
+    Args:
+        s: layer input size (w & h, only w=h supported)
+        pad: padding size
+        stride: stride size
+        k: kernel size
+    """
+    return (s + 2 * pad - k) // stride + 1
+
+
+def flops_per_conv(s: int | np.ndarray, B: int | np.ndarray, pad: int, stride: int, k: int, in_ch: int, out_ch: int) -> int | np.ndarray:
     """
     Calc flops per Conv2d layer
 
     Args:
-        S: input shape (w & h, only w=h supported)
+        s: layer input size (w & h, only w=h supported)
         B: batch size
         pad: padding size
         stride: stride size
@@ -16,58 +29,62 @@ def flops_per_conv(S: int | np.ndarray, B: int | np.ndarray, pad: int, stride: i
         in_ch: num of input channels
         out_ch: num of output channels
     """
+    s_out = out_size(s, pad, stride, k)
     return (
-        ((S + pad - k // 2) // stride) ** 2 # number of kernel applications per 1 kernel in 1 item
+        s_out ** 2 * in_ch # apply 1 kernel over all positions and channels
     ) * (
-        2 * (in_ch * k ** 2) # number of flops per kernel (in_ch * k^2 MACs, 1 MAC = 2 flops)
-    ) * out_ch * B # repeat per each item in batch and per each kernel
+        2 * k ** 2 # k^2 MACs per application
+    ) * (
+        out_ch # repeat per kernel
+    ) * (
+        B # per item
+    )
 
 
-def flops_per_max_pool(S: int | np.ndarray, B: int | np.ndarray, pad: int, stride: int, k: int, in_ch: int) -> int | np.ndarray:
+def flops_per_max_pool(s: int | np.ndarray, B: int | np.ndarray, pad: int, stride: int, k: int, in_ch: int) -> int | np.ndarray:
     """
     Calc flops per MaxPool2d layer
 
     Args:
-        S: input shape (w & h, only w=h supported)
+        s: layer input size (w & h, only w=h supported)
         B: batch size
         pad: padding size
         stride: stride size
         k: kernel size
         in_ch: num of input channels
     """
+    s_out = out_size(s, pad, stride, k)
+    return s_out ** 2 * in_ch * (
+        k ** 2 - 1 # comparisons per window
+    ) * B
+
+
+def flops_per_avg_pool(s: int | np.ndarray, B: int | np.ndarray, in_ch: int) -> int | np.ndarray:
+    """
+    Calc flops per AvgPool2d layer (global pool)
+
+    Args:
+        s: layer input size (w & h, only w=h supported)
+        B: batch size
+        in_ch: num of input channels
+    """
     return (
-        ((S + pad - k // 2) // stride) ** 2 # number of pool applications per 1 channel in 1 item
-    ) * (
-        (k ** 2) - 1 # number of flops per one pool (k^2 - 1 comparisons)
-    ) * in_ch * B # repeat per each item in batch and per each channel
+        s ** 2 # (s^2 - 1) adds + 1 divide per channel
+    ) * in_ch * B
 
 
-def flops_per_relu(S: int | np.ndarray, B: int | np.ndarray, in_ch: int) -> int | np.ndarray:
+def flops_per_relu(s: int | np.ndarray, B: int | np.ndarray, in_ch: int) -> int | np.ndarray:
     """
     Calc flops per ReLU layer
 
     Args:
-        S: input shape (w & h, only w=h supported)
+        s: layer input size (w & h, only w=h supported)
         B: batch size
         in_ch: num of input channels
     """
     return (
-        in_ch * S ** 2 # number of values in one item (1 comparison with 0 per value)
-    ) * B # repeat per each item in batch
-
-
-def flops_per_avg_pool(S: int | np.ndarray, B: int | np.ndarray, in_ch: int) -> int | np.ndarray:
-    """
-    Calc flops per AvgPool2d layer
-
-    Args:
-        S: input shape (w & h, only w=h supported)
-        B: batch size
-        in_ch: num of input channels
-    """
-    return (
-        S ** 2 # number of flops in one channel (sum all (s^2 - 1) and divide (1))
-    ) * in_ch * B # repeat per each channel in each item in batch
+        s ** 2 # 1 comparison per value
+    ) * in_ch * B
 
 
 def flops_per_linear(B: int | np.ndarray, in_ch: int, out_ch: int) -> int | np.ndarray:
@@ -80,8 +97,8 @@ def flops_per_linear(B: int | np.ndarray, in_ch: int, out_ch: int) -> int | np.n
         out_ch: num of output channels
     """
     return (
-        2 * in_ch # number of flops per one scalar product ((2 * in_ch - 1) + 1 flop per bias)
-    ) * out_ch * B # repeat per item in batch
+        2 * in_ch # in_ch mults, (in_ch - 1) adds, 1 bias add
+    ) * out_ch * B
 
 
 def flops(image_size: int | np.ndarray, batch: int | np.ndarray) -> int | np.ndarray:
@@ -124,8 +141,8 @@ def params_memory_per_conv(k: int, in_ch: int, out_ch: int) -> int:
         out_ch: num of output channels
     """
     return (
-        in_ch * k ** 2 # weights per one kernel
-    ) * out_ch * 4 # repeat per each kernel, 4 bytes per fp32
+        in_ch * k ** 2 # weights per kernel
+    ) * out_ch * 4
 
 
 def params_memory_per_linear(in_ch: int, out_ch: int) -> int:
@@ -137,16 +154,17 @@ def params_memory_per_linear(in_ch: int, out_ch: int) -> int:
         out_ch: num of output channels
     """
     return (
-        in_ch * out_ch + out_ch # weights + bias
-    ) * 4 # 4 bytes per fp32
+        in_ch * out_ch # weights
+        + out_ch # bias
+    ) * 4
 
 
-def memory_per_conv_forward(S: int | np.ndarray, B: int | np.ndarray, pad: int, stride: int, k: int, in_ch: int, out_ch: int) -> int | np.ndarray:
+def memory_per_conv_forward(s: int | np.ndarray, B: int | np.ndarray, pad: int, stride: int, k: int, in_ch: int, out_ch: int) -> int | np.ndarray:
     """
     Calc memory (bytes) allocated by tensors during Conv2d forward (input + output)
 
     Args:
-        S: input shape (w & h, only w=h supported)
+        s: layer input size (w & h, only w=h supported)
         B: batch size
         pad: padding size
         stride: stride size
@@ -154,18 +172,19 @@ def memory_per_conv_forward(S: int | np.ndarray, B: int | np.ndarray, pad: int, 
         in_ch: num of input channels
         out_ch: num of output channels
     """
+    s_out = out_size(s, pad, stride, k)
     return (
-        in_ch * S ** 2 # input values in one item
-        + out_ch * ((S + 2 * pad - k) // stride + 1) ** 2 # output values in one item
-    ) * B * 4 # repeat per each item in batch, 4 bytes per fp32
+        in_ch * s ** 2 # input
+        + out_ch * s_out ** 2 # output
+    ) * B * 4
 
 
-def memory_per_max_pool_forward(S: int | np.ndarray, B: int | np.ndarray, pad: int, stride: int, k: int, in_ch: int) -> int | np.ndarray:
+def memory_per_max_pool_forward(s: int | np.ndarray, B: int | np.ndarray, pad: int, stride: int, k: int, in_ch: int) -> int | np.ndarray:
     """
     Calc memory (bytes) allocated by tensors during MaxPool2d forward (input + output + indices)
 
     Args:
-        S: input shape (w & h, only w=h supported)
+        s: layer input size (w & h, only w=h supported)
         B: batch size
         pad: padding size
         stride: stride size
@@ -173,40 +192,38 @@ def memory_per_max_pool_forward(S: int | np.ndarray, B: int | np.ndarray, pad: i
         in_ch: num of input channels
     """
     # On CUDA max_pool2d always runs max_pool2d_with_indices, so int64 indices are allocated even in inference
-    out = ((S + 2 * pad - k) // stride + 1) ** 2 # output values in one channel
+    s_out = out_size(s, pad, stride, k)
     return (
-        S ** 2 * 4 # input values in one channel, 4 bytes per fp32
-        + out * 4 # output values, 4 bytes per fp32
-        + out * 8 # indices, 8 bytes per int64
-    ) * in_ch * B # repeat per each channel in each item in batch
+        4 * s ** 2 # input, fp32
+        + 4 * s_out ** 2 # output, fp32
+        + 8 * s_out ** 2 # indices, int64
+    ) * in_ch * B
 
 
-def memory_per_relu_forward(S: int | np.ndarray, B: int | np.ndarray, in_ch: int) -> int | np.ndarray:
+def memory_per_avg_pool_forward(s: int | np.ndarray, B: int | np.ndarray, in_ch: int) -> int | np.ndarray:
+    """
+    Calc memory (bytes) allocated by tensors during AvgPool2d forward (input + output, global pool)
+
+    Args:
+        s: layer input size (w & h, only w=h supported)
+        B: batch size
+        in_ch: num of input channels
+    """
+    return (s ** 2 + 1) * in_ch * B * 4
+
+
+def memory_per_relu_forward(s: int | np.ndarray, B: int | np.ndarray, in_ch: int) -> int | np.ndarray:
     """
     Calc memory (bytes) allocated by tensors during ReLU forward (inplace, so input only)
 
     Args:
-        S: input shape (w & h, only w=h supported)
+        s: layer input size (w & h, only w=h supported)
         B: batch size
         in_ch: num of input channels
     """
     return (
-        in_ch * S ** 2 # values in one item, output shares input storage
-    ) * B * 4 # repeat per each item in batch, 4 bytes per fp32
-
-
-def memory_per_avg_pool_forward(S: int | np.ndarray, B: int | np.ndarray, in_ch: int) -> int | np.ndarray:
-    """
-    Calc memory (bytes) allocated by tensors during AvgPool2d forward (input + output)
-
-    Args:
-        S: input shape (w & h, only w=h supported)
-        B: batch size
-        in_ch: num of input channels
-    """
-    return (
-        S ** 2 + 1 # input values + 1 output value in one channel (global pool)
-    ) * in_ch * B * 4 # repeat per each channel in each item in batch, 4 bytes per fp32
+        s ** 2 * in_ch # output shares input
+    ) * B * 4
 
 
 def memory_per_linear_forward(B: int | np.ndarray, in_ch: int, out_ch: int) -> int | np.ndarray:
@@ -218,9 +235,7 @@ def memory_per_linear_forward(B: int | np.ndarray, in_ch: int, out_ch: int) -> i
         in_ch: num of input channels
         out_ch: num of output channels
     """
-    return (
-        in_ch + out_ch # input + output values in one item
-    ) * B * 4 # repeat per each item in batch, 4 bytes per fp32
+    return (in_ch + out_ch) * B * 4
 
 
 def memory(image_size: int | np.ndarray, batch: int | np.ndarray) -> int | np.ndarray:
@@ -243,11 +258,13 @@ def memory(image_size: int | np.ndarray, batch: int | np.ndarray) -> int | np.nd
         + params_memory_per_linear(in_ch=256, out_ch=100)
     )
     # Caller keeps a reference to the input batch, so its storage isn't freed after the 1st layer
-    x = (
-        3 * S ** 2 # input values in one item
-    ) * B * 4 # repeat per each item in batch, 4 bytes per fp32
-    # cuBLAS workspace for Linear, taken from caching allocator on 1st matmul and kept (4096 KiB * 2 + 16 KiB * 8 below sm_90)
-    cublas_workspace = 4096 * 1024 * 2 + 16 * 1024 * 8
+    x = 3 * S ** 2 * B * 4
+    # cuBLAS workspace for Linear, taken from caching allocator on 1st matmul and kept.
+    # Default CUBLAS_WORKSPACE_CONFIG=:4096:2:16:8 from parseChosenWorkspaceSize() in ATen/cuda/CublasHandlePool.cpp, only sm_90 gets 32 MiB
+    cublas_workspace = (
+        4096 * 1024 * 2 # 2 chunks of 4096 KiB
+        + 16 * 1024 * 8 # 8 chunks of 16 KiB
+    )
     # np.maximum instead of max() to keep NumPy broadcasting
     return params + cublas_workspace + np.maximum(
         memory_per_conv_forward(S, B, pad=3, stride=2, k=7, in_ch=3, out_ch=32), # input tensor is x
@@ -272,12 +289,12 @@ def memory(image_size: int | np.ndarray, batch: int | np.ndarray) -> int | np.nd
     )
 
 
-def bytes_moved_per_conv(S: int | np.ndarray, B: int | np.ndarray, pad: int, stride: int, k: int, in_ch: int, out_ch: int) -> int | np.ndarray:
+def bytes_moved_per_conv(s: int | np.ndarray, B: int | np.ndarray, pad: int, stride: int, k: int, in_ch: int, out_ch: int) -> int | np.ndarray:
     """
     Calc DRAM traffic (bytes) of Conv2d kernel (without bias), assuming each element is read/written once
 
     Args:
-        S: input shape (w & h, only w=h supported)
+        s: layer input size (w & h, only w=h supported)
         B: batch size
         pad: padding size
         stride: stride size
@@ -285,61 +302,14 @@ def bytes_moved_per_conv(S: int | np.ndarray, B: int | np.ndarray, pad: int, str
         in_ch: num of input channels
         out_ch: num of output channels
     """
+    s_out = out_size(s, pad, stride, k)
     return (
         (
-            in_ch * S ** 2 # read input values in one item, padding zeros aren't stored
-            + out_ch * ((S + 2 * pad - k) // stride + 1) ** 2 # write output values in one item
-        ) * B # repeat per each item in batch
-        + (in_ch * k ** 2) * out_ch # read weights once, independent of batch
-    ) * 4 # 4 bytes per fp32
-
-
-def bytes_moved_per_max_pool(S: int | np.ndarray, B: int | np.ndarray, pad: int, stride: int, k: int, in_ch: int) -> int | np.ndarray:
-    """
-    Calc DRAM traffic (bytes) of MaxPool2d kernel (input + output + indices), assuming each element is read/written once
-
-    Args:
-        S: input shape (w & h, only w=h supported)
-        B: batch size
-        pad: padding size
-        stride: stride size
-        k: kernel size
-        in_ch: num of input channels
-    """
-    out = ((S + 2 * pad - k) // stride + 1) ** 2 # output values in one channel
-    return (
-        S ** 2 * 4 # read input values, overlapping windows hit L2, 4 bytes per fp32
-        + out * 4 # write output values, 4 bytes per fp32
-        + out * 8 # write indices, max_pool2d_with_indices runs on CUDA, 8 bytes per int64
-    ) * in_ch * B # repeat per each channel in each item in batch
-
-
-def bytes_moved_per_relu(S: int | np.ndarray, B: int | np.ndarray, in_ch: int) -> int | np.ndarray:
-    """
-    Calc DRAM traffic (bytes) of ReLU kernel (inplace saves allocation, not traffic)
-
-    Args:
-        S: input shape (w & h, only w=h supported)
-        B: batch size
-        in_ch: num of input channels
-    """
-    return (
-        2 * in_ch * S ** 2 # read + write back values in one item
-    ) * B * 4 # repeat per each item in batch, 4 bytes per fp32
-
-
-def bytes_moved_per_avg_pool(S: int | np.ndarray, B: int | np.ndarray, in_ch: int) -> int | np.ndarray:
-    """
-    Calc DRAM traffic (bytes) of AvgPool2d kernel (global pool)
-
-    Args:
-        S: input shape (w & h, only w=h supported)
-        B: batch size
-        in_ch: num of input channels
-    """
-    return (
-        S ** 2 + 1 # read input values + write 1 output value in one channel
-    ) * in_ch * B * 4 # repeat per each channel in each item in batch, 4 bytes per fp32
+            in_ch * s ** 2 # read input
+            + out_ch * s_out ** 2 # write output
+        ) * B
+        + in_ch * k ** 2 * out_ch # read weights once
+    ) * 4
 
 
 def bytes_moved_per_linear(B: int | np.ndarray, in_ch: int, out_ch: int) -> int | np.ndarray:
@@ -352,9 +322,50 @@ def bytes_moved_per_linear(B: int | np.ndarray, in_ch: int, out_ch: int) -> int 
         out_ch: num of output channels
     """
     return (
-        (in_ch + out_ch) * B # read input + write output values, repeat per each item in batch
-        + in_ch * out_ch + out_ch # read weights + bias once, independent of batch
-    ) * 4 # 4 bytes per fp32
+        (in_ch + out_ch) * B
+        + in_ch * out_ch + out_ch # read weights + bias once
+    ) * 4
+
+
+def bytes_moved_per_relu(s: int | np.ndarray, B: int | np.ndarray, in_ch: int) -> int | np.ndarray:
+    """
+    Calc DRAM traffic (bytes) of ReLU kernel (inplace saves allocation, not traffic)
+
+    Args:
+        s: layer input size (w & h, only w=h supported)
+        B: batch size
+        in_ch: num of input channels
+    """
+    return (
+        2 * s ** 2 * in_ch # read + write back
+    ) * B * 4
+
+
+def bytes_moved_per_max_pool(s: int | np.ndarray, B: int | np.ndarray, pad: int, stride: int, k: int, in_ch: int) -> int | np.ndarray:
+    """
+    Calc DRAM traffic (bytes) of MaxPool2d kernel: read input, write output + indices, so same as allocated tensors
+
+    Args:
+        s: layer input size (w & h, only w=h supported)
+        B: batch size
+        pad: padding size
+        stride: stride size
+        k: kernel size
+        in_ch: num of input channels
+    """
+    return memory_per_max_pool_forward(s, B, pad, stride, k, in_ch)
+
+
+def bytes_moved_per_avg_pool(s: int | np.ndarray, B: int | np.ndarray, in_ch: int) -> int | np.ndarray:
+    """
+    Calc DRAM traffic (bytes) of AvgPool2d kernel: read input, write output, so same as allocated tensors
+
+    Args:
+        s: layer input size (w & h, only w=h supported)
+        B: batch size
+        in_ch: num of input channels
+    """
+    return memory_per_avg_pool_forward(s, B, in_ch)
 
 
 def kernels(S: int | np.ndarray, B: int | np.ndarray) -> list[tuple[int | np.ndarray, int | np.ndarray]]:
