@@ -1,8 +1,6 @@
 from functools import reduce
 
 import numpy as np
-import torch
-import torch.nn as nn
 
 
 def flops_per_conv(S: int | np.ndarray, B: int | np.ndarray, pad: int, stride: int, k: int, in_ch: int, out_ch: int) -> int | np.ndarray:
@@ -15,8 +13,8 @@ def flops_per_conv(S: int | np.ndarray, B: int | np.ndarray, pad: int, stride: i
         pad: padding size
         stride: stride size
         k: kernel size
-        in_ch: num of input chanels
-        out_ch: num of output chanels
+        in_ch: num of input channels
+        out_ch: num of output channels
     """
     return (
         ((S + pad - k // 2) // stride) ** 2 # number of kernel applications per 1 kernel in 1 item
@@ -25,7 +23,7 @@ def flops_per_conv(S: int | np.ndarray, B: int | np.ndarray, pad: int, stride: i
     ) * out_ch * B # repeat per each item in batch and per each kernel
 
 
-def fllops_per_max_pool(S: int | np.ndarray, B: int | np.ndarray, pad: int, stride: int, k: int, in_ch: int) -> int | np.ndarray:
+def flops_per_max_pool(S: int | np.ndarray, B: int | np.ndarray, pad: int, stride: int, k: int, in_ch: int) -> int | np.ndarray:
     """
     Calc flops per MaxPool2d layer
 
@@ -35,12 +33,12 @@ def fllops_per_max_pool(S: int | np.ndarray, B: int | np.ndarray, pad: int, stri
         pad: padding size
         stride: stride size
         k: kernel size
-        in_ch: num of input chanels
+        in_ch: num of input channels
     """
     return (
         ((S + pad - k // 2) // stride) ** 2 # number of pool applications per 1 channel in 1 item
     ) * (
-        (k ** 2) - 1 # number of flops per one pool (k-1 comparisons)
+        (k ** 2) - 1 # number of flops per one pool (k^2 - 1 comparisons)
     ) * in_ch * B # repeat per each item in batch and per each channel
 
 
@@ -51,9 +49,9 @@ def flops_per_relu(S: int | np.ndarray, B: int | np.ndarray, in_ch: int) -> int 
     Args:
         S: input shape (w & h, only w=h supported)
         B: batch size
-        in_ch: num of input chanels
+        in_ch: num of input channels
     """
-    return ( 
+    return (
         in_ch * S ** 2 # number of values in one item (1 comparison with 0 per value)
     ) * B # repeat per each item in batch
 
@@ -65,9 +63,9 @@ def flops_per_avg_pool(S: int | np.ndarray, B: int | np.ndarray, in_ch: int) -> 
     Args:
         S: input shape (w & h, only w=h supported)
         B: batch size
-        in_ch: num of input chanels
+        in_ch: num of input channels
     """
-    return ( 
+    return (
         S ** 2 # number of flops in one channel (sum all (s^2 - 1) and divide (1))
     ) * in_ch * B # repeat per each channel in each item in batch
 
@@ -78,11 +76,11 @@ def flops_per_linear(B: int | np.ndarray, in_ch: int, out_ch: int) -> int | np.n
 
     Args:
         B: batch size
-        in_ch: num of input chanels
-        out_ch: num of output chanels
+        in_ch: num of input channels
+        out_ch: num of output channels
     """
-    return ( 
-        2 * in_ch # number of flops per one scalar product ((2 * in_ch - 2) + 1 flop per bias)
+    return (
+        2 * in_ch # number of flops per one scalar product ((2 * in_ch - 1) + 1 flop per bias)
     ) * out_ch * B # repeat per item in batch
 
 
@@ -98,7 +96,7 @@ def flops(image_size: int | np.ndarray, batch: int | np.ndarray) -> int | np.nda
     return (
         flops_per_conv(S, B, pad=3, stride=2, k=7, in_ch=3, out_ch=32) # -> S/2
         + flops_per_relu(S // 2, B, in_ch=32)
-        + fllops_per_max_pool(S // 2, B, pad=1, stride=2, k=3, in_ch=32) # -> S/4
+        + flops_per_max_pool(S // 2, B, pad=1, stride=2, k=3, in_ch=32) # -> S/4
         + flops_per_conv(S // 4, B, pad=2, stride=1, k=5, in_ch=32, out_ch=64)
         + flops_per_relu(S // 4, B, in_ch=64)
         + flops_per_conv(S // 4, B, pad=1, stride=2, k=3, in_ch=64, out_ch=128) # -> S/8
@@ -122,8 +120,8 @@ def params_memory_per_conv(k: int, in_ch: int, out_ch: int) -> int:
 
     Args:
         k: kernel size
-        in_ch: num of input chanels
-        out_ch: num of output chanels
+        in_ch: num of input channels
+        out_ch: num of output channels
     """
     return (
         in_ch * k ** 2 # weights per one kernel
@@ -135,8 +133,8 @@ def params_memory_per_linear(in_ch: int, out_ch: int) -> int:
     Calc memory (bytes) of Linear weights (with bias)
 
     Args:
-        in_ch: num of input chanels
-        out_ch: num of output chanels
+        in_ch: num of input channels
+        out_ch: num of output channels
     """
     return (
         in_ch * out_ch + out_ch # weights + bias
@@ -153,8 +151,8 @@ def memory_per_conv_forward(S: int | np.ndarray, B: int | np.ndarray, pad: int, 
         pad: padding size
         stride: stride size
         k: kernel size
-        in_ch: num of input chanels
-        out_ch: num of output chanels
+        in_ch: num of input channels
+        out_ch: num of output channels
     """
     return (
         in_ch * S ** 2 # input values in one item
@@ -172,7 +170,7 @@ def memory_per_max_pool_forward(S: int | np.ndarray, B: int | np.ndarray, pad: i
         pad: padding size
         stride: stride size
         k: kernel size
-        in_ch: num of input chanels
+        in_ch: num of input channels
     """
     # On CUDA max_pool2d always runs max_pool2d_with_indices, so int64 indices are allocated even in inference
     out = ((S + 2 * pad - k) // stride + 1) ** 2 # output values in one channel
@@ -190,7 +188,7 @@ def memory_per_relu_forward(S: int | np.ndarray, B: int | np.ndarray, in_ch: int
     Args:
         S: input shape (w & h, only w=h supported)
         B: batch size
-        in_ch: num of input chanels
+        in_ch: num of input channels
     """
     return (
         in_ch * S ** 2 # values in one item, output shares input storage
@@ -204,7 +202,7 @@ def memory_per_avg_pool_forward(S: int | np.ndarray, B: int | np.ndarray, in_ch:
     Args:
         S: input shape (w & h, only w=h supported)
         B: batch size
-        in_ch: num of input chanels
+        in_ch: num of input channels
     """
     return (
         S ** 2 + 1 # input values + 1 output value in one channel (global pool)
@@ -217,8 +215,8 @@ def memory_per_linear_forward(B: int | np.ndarray, in_ch: int, out_ch: int) -> i
 
     Args:
         B: batch size
-        in_ch: num of input chanels
-        out_ch: num of output chanels
+        in_ch: num of input channels
+        out_ch: num of output channels
     """
     return (
         in_ch + out_ch # input + output values in one item
@@ -284,8 +282,8 @@ def bytes_moved_per_conv(S: int | np.ndarray, B: int | np.ndarray, pad: int, str
         pad: padding size
         stride: stride size
         k: kernel size
-        in_ch: num of input chanels
-        out_ch: num of output chanels
+        in_ch: num of input channels
+        out_ch: num of output channels
     """
     return (
         (
@@ -306,7 +304,7 @@ def bytes_moved_per_max_pool(S: int | np.ndarray, B: int | np.ndarray, pad: int,
         pad: padding size
         stride: stride size
         k: kernel size
-        in_ch: num of input chanels
+        in_ch: num of input channels
     """
     out = ((S + 2 * pad - k) // stride + 1) ** 2 # output values in one channel
     return (
@@ -323,7 +321,7 @@ def bytes_moved_per_relu(S: int | np.ndarray, B: int | np.ndarray, in_ch: int) -
     Args:
         S: input shape (w & h, only w=h supported)
         B: batch size
-        in_ch: num of input chanels
+        in_ch: num of input channels
     """
     return (
         2 * in_ch * S ** 2 # read + write back values in one item
@@ -337,7 +335,7 @@ def bytes_moved_per_avg_pool(S: int | np.ndarray, B: int | np.ndarray, in_ch: in
     Args:
         S: input shape (w & h, only w=h supported)
         B: batch size
-        in_ch: num of input chanels
+        in_ch: num of input channels
     """
     return (
         S ** 2 + 1 # read input values + write 1 output value in one channel
@@ -350,8 +348,8 @@ def bytes_moved_per_linear(B: int | np.ndarray, in_ch: int, out_ch: int) -> int 
 
     Args:
         B: batch size
-        in_ch: num of input chanels
-        out_ch: num of output chanels
+        in_ch: num of input channels
+        out_ch: num of output channels
     """
     return (
         (in_ch + out_ch) * B # read input + write output values, repeat per each item in batch
@@ -377,7 +375,7 @@ def kernels(S: int | np.ndarray, B: int | np.ndarray) -> list[tuple[int | np.nda
             bytes_moved_per_relu(S // 2, B, in_ch=32),
         ),
         (
-            fllops_per_max_pool(S // 2, B, pad=1, stride=2, k=3, in_ch=32),
+            flops_per_max_pool(S // 2, B, pad=1, stride=2, k=3, in_ch=32),
             bytes_moved_per_max_pool(S // 2, B, pad=1, stride=2, k=3, in_ch=32),
         ),
         (

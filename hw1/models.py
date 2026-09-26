@@ -10,9 +10,9 @@ def get_model(S: int, device: torch.device | str = "cpu") -> nn.Sequential:
         S: input shape (w & h, only w=h supported)
         device: cpu or cuda
     """
-    # Check that shape is divisable by 16
+    # Check that shape is divisible by 16
     if S % 16 != 0:
-        raise ValueError("S should be divisable by 16")
+        raise ValueError("S should be divisible by 16")
     # Construct and return model
     return nn.Sequential( # -> (B, 3, S, S)
         nn.Conv2d(
