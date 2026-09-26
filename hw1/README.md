@@ -43,3 +43,8 @@ No OOM on the grid, and `memory()` predicts none either.
 ![latency](results/figures/latency_vs_batch.png)
 ![memory](results/figures/memory_vs_batch.png)
 ![energy](results/figures/energy_vs_batch.png)
+
+## Discussion
+
+- Regimes: latency sits on the launch floor (17 kernels × t_launch ≈ 0.43 ms) up to B ≈ 71 at S = 32, B ≈ 18 at S = 64, B ≈ 5 at S = 128 and B ≤ 2 at S ≥ 208. Past it the pass is compute-bound: ~87 % of the time is convs, ~12 % is ReLU/pool kernels, which are always memory-bound (0.1–0.3 FLOP/byte vs P/W ≈ 11). Convs are memory-bound only inside the launch-bound corner, so no separate memory-bound stage is visible.
+- Memory is underpredicted, most likely by a cuDNN conv workspace that `memory()` doesn't model: past a shape-dependent threshold (S = 128 / B = 64, S = 256 / B = 16, but not S = 512 / B = 8) peak memory jumps by 24–34 bytes per S²·B. Tiny batches get a fixed 5–10 MiB extra instead.
