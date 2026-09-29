@@ -1,0 +1,159 @@
+import math
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+
+class GhostBatchNorm2d(nn.BatchNorm2d):
+    """
+    BN with batch statistics per chunk of `ghost` images, as in the paper's Caffe multi-GPU runs where each GPU normalizes its own share of the batch
+    Running stats are updated from the first chunk only, like GPU 0 whose train net shares BN blobs with Caffe's test net
+    """
+
+    def __init__(self, num_features: int, momentum: float, ghost: int) -> None:
+        """
+        Construct BN
+
+        Args:
+            num_features: number of channels
+            momentum: PyTorch BN momentum, weight of the new batch stats
+            ghost: images per chunk
+        """
+        super().__init__(num_features=num_features, momentum=momentum)
+        self.ghost = ghost
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Normalize every chunk with its own batch stats in training, with running stats in eval
+
+        Args:
+            x: input (B, C, S, S)
+        """
+        if not self.training or len(x) <= self.ghost:
+            return super().forward(x)
+        first, *rest = x.split(self.ghost)
+        return torch.cat([
+            super().forward(first), # updates running stats
+            *[F.batch_norm(c, None, None, self.weight, self.bias, training=True, eps=self.eps) for c in rest],
+        ])
+
+
+def batch_norm(channels: int, maf: float, ghost: int) -> GhostBatchNorm2d:
+    """
+    Construct BN equivalent to Caffe BatchNorm + Scale pair on one GPU
+
+    Args:
+        channels: number of channels
+        maf: Caffe moving_average_fraction, weight of the old running stats
+        ghost: images per BN chunk, per-GPU batch in the paper
+    """
+    return GhostBatchNorm2d(
+        num_features=channels,
+        momentum=1 - maf, # PyTorch momentum is the weight of the new batch stats
+        ghost=ghost,
+    )
+
+
+class Block(nn.Module):
+    """
+    Residual block of Caffe ResNet-56 from the paper (Tables 3, 4): conv-BN-ReLU-conv-BN + shortcut -> ReLU
+    Downsampling block halves S with stride 2, shortcut is 3x3/2 average pooling, output is zero padded to 2x channels
+    """
+
+    def __init__(self, channels: int, maf: float, ghost: int, downsample: bool = False) -> None:
+        """
+        Construct block layers
+
+        Args:
+            channels: numChannels, width of both convs
+            maf: Caffe BN moving_average_fraction
+            ghost: images per BN chunk
+            downsample: halve S and double channels
+        """
+        super().__init__()
+        self.downsample = downsample
+        self.conv1 = nn.Conv2d(
+            in_channels=channels,
+            out_channels=channels,
+            kernel_size=3,
+            stride=2 if downsample else 1,
+            padding=1,
+            bias=False, # Caffe convs have bias, BN right after cancels it
+        )
+        self.bn1 = batch_norm(channels, maf, ghost)
+        self.conv2 = nn.Conv2d(
+            in_channels=channels,
+            out_channels=channels,
+            kernel_size=3,
+            stride=1,
+            padding=1,
+            bias=False,
+        )
+        self.bn2 = batch_norm(channels, maf, ghost)
+        # Caffe pooling rounds output size up: 32 -> 16, same as the stride 2 conv
+        self.shortcut = nn.AvgPool2d(kernel_size=3, stride=2, ceil_mode=True) if downsample else nn.Identity()
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Run block
+
+        Args:
+            x: input (B, C, S, S)
+        """
+        out = F.relu(self.bn1(self.conv1(x))) # -> (B, C, S/stride, S/stride)
+        out = F.relu(self.bn2(self.conv2(out)) + self.shortcut(x)) # -> (B, C, S/stride, S/stride)
+        if self.downsample:
+            out = torch.cat([out, torch.zeros_like(out)], dim=1) # -> (B, 2C, S/2, S/2)
+        return out
+
+
+def get_model(maf: float, ghost: int, device: torch.device | str = "cpu") -> nn.Sequential:
+    """
+    Construct Caffe ResNet-56 for CIFAR-10 from the paper (Table 5, architectures/Resnet56Cifar.prototxt in the official repo) as nn.Sequential
+
+    Args:
+        maf: Caffe BN moving_average_fraction
+        ghost: images per BN chunk, per-GPU batch in the paper
+        device: cpu or cuda
+    """
+    model = nn.Sequential( # -> (B, 3, 32, 32)
+        nn.Conv2d(
+            in_channels=3,
+            out_channels=16,
+            kernel_size=3,
+            stride=1, # Table 5 says 2, prototxt has 1, and only 1 keeps the final 8x8 pool global
+            padding=1,
+            bias=False,
+        ), # -> (B, 16, 32, 32)
+        batch_norm(16, maf, ghost),
+        nn.ReLU(
+            inplace=True,
+        ), # -> (B, 16, 32, 32)
+        *[Block(16, maf, ghost) for _ in range(9)], # -> (B, 16, 32, 32)
+        Block(16, maf, ghost, downsample=True), # -> (B, 32, 16, 16)
+        *[Block(32, maf, ghost) for _ in range(8)], # -> (B, 32, 16, 16)
+        Block(32, maf, ghost, downsample=True), # -> (B, 64, 8, 8)
+        *[Block(64, maf, ghost) for _ in range(8)], # -> (B, 64, 8, 8)
+        # Head
+        nn.AvgPool2d(
+            kernel_size=8,
+            stride=1,
+        ), # -> (B, 64, 1, 1)
+        nn.Flatten(), # -> (B, 64)
+        nn.Linear(
+            in_features=64,
+            out_features=10,
+        ), # -> (B, 10)
+    )
+    # Caffe fillers: msra for convs (std = sqrt(2 / fan_in)), xavier for FC (uniform, bound = sqrt(3 / fan_in)), zero biases
+    for m in model.modules():
+        if isinstance(m, nn.Conv2d):
+            nn.init.kaiming_normal_(m.weight, mode="fan_in", nonlinearity="relu")
+        elif isinstance(m, nn.Linear):
+            bound = math.sqrt(3 / m.in_features)
+            nn.init.uniform_(m.weight, -bound, bound)
+            nn.init.zeros_(m.bias)
+    return model.to( # Transfer to device
+        device=device
+    )
