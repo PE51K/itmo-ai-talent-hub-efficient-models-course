@@ -7,52 +7,46 @@ import torch.nn.functional as F
 
 class GhostBatchNorm2d(nn.BatchNorm2d):
     """
-    BN with batch statistics per chunk of `ghost` images, as in the paper's Caffe multi-GPU runs where each GPU normalizes its own share of the batch
-    Running stats are updated from the first chunk only, like GPU 0 whose train net shares BN blobs with Caffe's test net
+    Caffe BatchNorm + Scale pair of the paper's 8-GPU runs on one GPU
+    Batch statistics per chunk of `ghost` images, as each GPU normalizes its own share of the batch (the paper's "no ghost statistics" means no extra BN trick on top of this)
+    Running stats are updated from the first chunk only, like the root GPU, which runs the test net and broadcasts its BN blobs to the other GPUs every iteration
     """
 
-    def __init__(self, num_features: int, momentum: float, ghost: int) -> None:
+    def __init__(self, num_features: int, maf: float, ghost: int) -> None:
         """
         Construct BN
 
         Args:
             num_features: number of channels
-            momentum: PyTorch BN momentum, weight of the new batch stats
+            maf: Caffe moving_average_fraction, weight of the old running stats
             ghost: images per chunk
         """
-        super().__init__(num_features=num_features, momentum=momentum)
+        super().__init__(
+            num_features=num_features,
+            momentum=1 - maf, # PyTorch momentum is the weight of the new batch stats
+        )
+        self.maf = maf
         self.ghost = ghost
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
-        Normalize every chunk with its own batch stats in training, with running stats in eval
+        Normalize every chunk with its own batch stats in training, with Caffe's running stats in eval
 
         Args:
             x: input (B, C, S, S)
         """
-        if not self.training or len(x) <= self.ghost:
-            return super().forward(x)
-        first, *rest = x.split(self.ghost)
-        return torch.cat([
-            super().forward(first), # updates running stats
-            *[F.batch_norm(c, None, None, self.weight, self.bias, training=True, eps=self.eps) for c in rest],
-        ])
-
-
-def batch_norm(channels: int, maf: float, ghost: int) -> GhostBatchNorm2d:
-    """
-    Construct BN equivalent to Caffe BatchNorm + Scale pair on one GPU
-
-    Args:
-        channels: number of channels
-        maf: Caffe moving_average_fraction, weight of the old running stats
-        ghost: images per BN chunk, per-GPU batch in the paper
-    """
-    return GhostBatchNorm2d(
-        num_features=channels,
-        momentum=1 - maf, # PyTorch momentum is the weight of the new batch stats
-        ghost=ghost,
-    )
+        if self.training:
+            first, *rest = x.split(self.ghost)
+            return torch.cat([
+                super().forward(first), # updates running stats
+                *[F.batch_norm(c, None, None, self.weight, self.bias, training=True, eps=self.eps) for c in rest],
+            ])
+        # Caffe divides its maf-weighted sums of batch stats by the sum of weights 1 + maf + ... + maf^(t-1),
+        # PyTorch's EMA instead keeps maf^t of the initial mean 0 / var 1, remove it to get Caffe's stats
+        decay = self.maf ** self.num_batches_tracked
+        mean = self.running_mean / (1 - decay)
+        var = (self.running_var - decay) / (1 - decay)
+        return F.batch_norm(x, mean, var, self.weight, self.bias, training=False, eps=self.eps)
 
 
 class Block(nn.Module):
@@ -79,9 +73,9 @@ class Block(nn.Module):
             kernel_size=3,
             stride=2 if downsample else 1,
             padding=1,
-            bias=False, # Caffe convs have bias, BN right after cancels it
+            bias=False, # Caffe convs have a bias (lr_mult 2, decay_mult 0, init 0), BN right after cancels it, so it stays 0
         )
-        self.bn1 = batch_norm(channels, maf, ghost)
+        self.bn1 = GhostBatchNorm2d(channels, maf, ghost)
         self.conv2 = nn.Conv2d(
             in_channels=channels,
             out_channels=channels,
@@ -90,7 +84,7 @@ class Block(nn.Module):
             padding=1,
             bias=False,
         )
-        self.bn2 = batch_norm(channels, maf, ghost)
+        self.bn2 = GhostBatchNorm2d(channels, maf, ghost)
         # Caffe pooling rounds output size up: 32 -> 16, same as the stride 2 conv
         self.shortcut = nn.AvgPool2d(kernel_size=3, stride=2, ceil_mode=True) if downsample else nn.Identity()
 
@@ -104,7 +98,7 @@ class Block(nn.Module):
         out = F.relu(self.bn1(self.conv1(x))) # -> (B, C, S/stride, S/stride)
         out = F.relu(self.bn2(self.conv2(out)) + self.shortcut(x)) # -> (B, C, S/stride, S/stride)
         if self.downsample:
-            out = torch.cat([out, torch.zeros_like(out)], dim=1) # -> (B, 2C, S/2, S/2)
+            out = torch.cat([out, torch.zeros_like(out)], dim=1) # DummyData zeros + Concat -> (B, 2C, S/2, S/2)
         return out
 
 
@@ -126,7 +120,7 @@ def get_model(maf: float, ghost: int, device: torch.device | str = "cpu") -> nn.
             padding=1,
             bias=False,
         ), # -> (B, 16, 32, 32)
-        batch_norm(16, maf, ghost),
+        GhostBatchNorm2d(16, maf, ghost),
         nn.ReLU(
             inplace=True,
         ), # -> (B, 16, 32, 32)
