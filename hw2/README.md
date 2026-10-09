@@ -47,7 +47,7 @@ The logs in `Results/` of the official repo are the authors' later replication, 
 
 ## Reproduce
 
-Open [`hw2_colab.ipynb`](https://colab.research.google.com/github/PE51K/itmo-ai-talent-hub-efficient-models-course/blob/main/hw2/hw2_colab.ipynb) in Colab with a T4 runtime. Each run is a separate cell and they can go in separate sessions. The PC-LR runs take about 11 hours each, the others 40 min to 1.5 h.
+Open [`hw2_colab.ipynb`](https://colab.research.google.com/github/PE51K/itmo-ai-talent-hub-efficient-models-course/blob/main/hw2/hw2_colab.ipynb) in Colab with a T4 runtime. Each run is a separate cell and they can go in separate sessions. The PC-LR runs take about 11 hours each, the others 40 min to 1.5 h. The PC-LR cells pass `--max-hours 11.5`, so training stops before Colab's 12-hour session limit and the results still get downloaded.
 
 Or open [`hw2_kaggle.ipynb`](https://kaggle.com/kernels/welcome?src=https://github.com/PE51K/itmo-ai-talent-hub-efficient-models-course/blob/main/hw2/hw2_kaggle.ipynb) in Kaggle with GPU T4 x2 and internet on. Every run uses both GPUs, and the runs go in two saved versions that run in the background, about 6.5 h each: the 50,000-sample runs (Fig. 1a, 2b) and the 10,000-sample runs (Table 1). `--max-hours 11.5` stops training before Kaggle's 12-hour session limit.
 
