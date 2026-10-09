@@ -4,6 +4,7 @@ import json
 import math
 import platform
 import time
+from datetime import timedelta
 from pathlib import Path
 
 import lightning as L
@@ -272,6 +273,7 @@ def main() -> None:
     """
     parser = argparse.ArgumentParser()
     parser.add_argument("runs", nargs="+", choices=list(RUNS))
+    parser.add_argument("--max-hours", type=float, help="stop each run after this many hours of training, for sessions with a time limit (Kaggle: 12 h)")
     args = parser.parse_args()
 
     torch.backends.cudnn.allow_tf32 = False # so that FP32 means FP32 on Ampere and newer GPUs
@@ -301,6 +303,8 @@ def main() -> None:
         trainer = L.Trainer(
             max_steps=cfg["max_iter"],
             max_epochs=-1, # length is set in iterations like in Caffe
+            max_time=timedelta(hours=args.max_hours) if args.max_hours else None, # Lightning tests once more at the stop
+            devices=1, # one process, the paper's 8 GPUs are GhostBatchNorm2d chunks, "auto" would start DDP on a multi-GPU machine
             val_check_interval=TEST_INTERVAL,
             check_val_every_n_epoch=None, # count val_check_interval in iterations across epochs
             num_sanity_val_steps=0,
