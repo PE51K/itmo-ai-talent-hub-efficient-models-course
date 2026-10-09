@@ -109,16 +109,20 @@ def load_cifar(train: bool) -> tuple[torch.Tensor, torch.Tensor]:
     return torch.from_numpy(ds.data).permute(0, 3, 1, 2).contiguous(), torch.tensor(ds.targets)
 
 
-def train_batches(n: int) -> list[list[int]]:
+def train_batches(n: int, rank: int, world: int) -> list[list[int]]:
     """
-    Construct image indices of one epoch, one list per iteration, as Caffe's multi-GPU Data layer feeds them
+    Construct image indices of one epoch for one process, one list per iteration, as Caffe's multi-GPU Data layer feeds them
     The LMDB is read in order without shuffling every epoch (shuffle exists only for ImageData layer),
     the reader deals images to the 8 GPUs round-robin, so GPU g gets images g, g + 8, ... of each 1000 (one BN chunk)
+    With several processes each takes 8 / world consecutive chunks of every batch
 
     Args:
         n: training set size, multiple of BATCH
+        rank: process index
+        world: number of processes
     """
-    return torch.arange(n).view(n // BATCH, BATCH // GPUS, GPUS).transpose(1, 2).reshape(n // BATCH, BATCH).tolist()
+    batches = torch.arange(n).view(n // BATCH, BATCH // GPUS, GPUS).transpose(1, 2).reshape(n // BATCH, BATCH)
+    return batches.tensor_split(world, dim=1)[rank].tolist()
 
 
 class TestBatches:
@@ -126,27 +130,31 @@ class TestBatches:
     Image indices of one Caffe test: test_iter x batch_size images read from where the previous test stopped, wrapping around the test set
     """
 
-    def __init__(self, n: int) -> None:
+    def __init__(self, n: int, rank: int, world: int) -> None:
         """
         Construct cursor
 
         Args:
             n: test set size
+            rank: process index
+            world: number of processes
         """
         self.n = n
+        self.rank = rank
+        self.world = world
         self.cursor = TEST_IMAGES % n # Caffe also tests at iteration 0, that pass is skipped but its images are read
 
     def __iter__(self):
         """
-        Yield batches of BATCH images instead of 125, BN in test uses running stats, so outputs don't depend on batching
+        Yield this process's share of batches of BATCH images instead of 125, BN in test uses running stats, so outputs don't depend on batching
         """
         idx = (self.cursor + torch.arange(TEST_IMAGES)) % self.n
         self.cursor = (self.cursor + TEST_IMAGES) % self.n
-        return iter(idx.split(BATCH))
+        return iter([b.tensor_split(self.world)[self.rank] for b in idx.split(BATCH)])
 
     def __len__(self) -> int:
         """
-        Number of batches per test
+        Number of batches per test, the same in every process
         """
         return math.ceil(TEST_IMAGES / BATCH)
 
@@ -154,25 +162,29 @@ class TestBatches:
 class SuperConvergence(L.LightningModule):
     """
     Train ResNet-56 with Caffe's SGD and LR policy from the paper, write one CSV row per test
+    On several GPUs runs as DDP, one process per GPU, and every iteration computes the same as on one GPU up to float rounding:
+    processes split each batch by BN chunks, DDP averages gradients like Caffe's P2PSync, tests use the BN stats of process 0
     """
 
-    def __init__(self, cfg: dict, mean: torch.Tensor, out: Path) -> None:
+    def __init__(self, cfg: dict, mean: torch.Tensor, train_set: TensorDataset, test_set: TensorDataset, out: Path) -> None:
         """
-        Construct model and metric accumulators
+        Construct model
 
         Args:
             cfg: run config from RUNS
             mean: mean training image (3, 32, 32), 0-255 scale
-            out: CSV path
+            train_set: uint8 training images and labels
+            test_set: uint8 test images and labels
+            out: CSV path, the JSON goes next to it
         """
         super().__init__()
         self.cfg = cfg
+        self.train_set = train_set
+        self.test_set = test_set
         self.out = out
         self.model = get_model(cfg["maf"], GHOST)
+        self.flips = torch.Generator().manual_seed(SEED)
         self.register_buffer("mean", mean)
-        # Loss sum, correct, seen since last test, kept on GPU to avoid a sync every iteration
-        self.register_buffer("train_sums", torch.zeros(3), persistent=False)
-        self.register_buffer("test_sums", torch.zeros(3), persistent=False)
 
     def preprocess(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -194,10 +206,11 @@ class SuperConvergence(L.LightningModule):
         x, y = batch
         x = self.preprocess(x)
         # mirror: true is the only augmentation, crop_size equals image size, so there are no random crops
-        flip = torch.rand(len(x), 1, 1, 1, device=x.device) < 0.5
-        x = torch.where(flip, x.flip(3), x)
+        # Flips are drawn for the whole batch and split like the images, so any number of GPUs gets the same ones
+        flip = torch.rand(BATCH, generator=self.flips).tensor_split(self.trainer.world_size)[self.global_rank] < 0.5
+        x = torch.where(flip.view(-1, 1, 1, 1).to(x.device), x.flip(3), x)
         logits = self.model(x)
-        loss = F.cross_entropy(logits, y) # SoftmaxWithLoss averages per GPU, the root solver averages the 8 GPUs
+        loss = F.cross_entropy(logits, y) # SoftmaxWithLoss averages per GPU, the root solver averages the 8 GPUs, DDP the processes
         self.train_sums[0] += loss.detach() * len(y)
         self.train_sums[1] += (logits.argmax(1) == y).sum()
         self.train_sums[2] += len(y)
@@ -218,19 +231,66 @@ class SuperConvergence(L.LightningModule):
         self.test_sums[1] += (logits.argmax(1) == y).sum()
         self.test_sums[2] += len(y)
 
+    def train_dataloader(self) -> DataLoader:
+        """
+        Construct loader of this process's share of every training batch
+        """
+        sampler = train_batches(len(self.train_set), self.global_rank, self.trainer.world_size)
+        return DataLoader(self.train_set, sampler=sampler, batch_size=None, pin_memory=self.device.type == "cuda")
+
+    def val_dataloader(self) -> DataLoader:
+        """
+        Construct loader of this process's share of every test, the sampler keeps its cursor between tests
+        """
+        sampler = TestBatches(len(self.test_set), self.global_rank, self.trainer.world_size)
+        return DataLoader(self.test_set, sampler=sampler, batch_size=None, pin_memory=self.device.type == "cuda")
+
     def on_train_start(self) -> None:
         """
-        Start wall clock and write CSV header
+        Start wall clock and metric accumulators, write config and environment to JSON and CSV header
         """
         self.start = time.perf_counter()
+        # Loss sum, correct, seen since last test, kept on GPU to avoid a sync every iteration
+        # Not buffers: DDP would overwrite them with process 0's values at the first forward after training
+        self.train_sums = torch.zeros(3, device=self.device)
+        self.test_sums = torch.zeros(3, device=self.device)
+        if not self.trainer.is_global_zero:
+            return
+        cuda = self.device.type == "cuda"
+        env = {
+            "gpu": torch.cuda.get_device_name(self.device) if cuda else str(self.device),
+            "devices": self.trainer.world_size,
+            "cuda": torch.version.cuda,
+            "cudnn": torch.backends.cudnn.version() if cuda else None,
+            "torch": torch.__version__,
+            "lightning": L.__version__,
+            "python": platform.python_version(),
+        }
+        print(self.out.stem, json.dumps({"config": self.cfg, "env": env}), flush=True)
+        self.out.with_suffix(".json").write_text(json.dumps({"config": self.cfg, "env": env}, indent=2))
         with open(self.out, "w", newline="") as f:
             csv.DictWriter(f, fieldnames=FIELDS).writeheader()
 
+    def on_validation_epoch_start(self) -> None:
+        """
+        Copy BN running stats of process 0 to the others before a test
+        Caffe tests with the root GPU's stats, which come from chunk 0 only. DDP broadcasts process 0's buffers before
+        every training forward, but then each other process updates its copy from its own first chunk
+        """
+        if self.trainer.world_size > 1:
+            for b in self.model.buffers():
+                torch.distributed.broadcast(b, src=0)
+
     def on_validation_epoch_end(self) -> None:
         """
-        Append train metrics since last test and test metrics to CSV, file is complete after every row
+        Append train metrics since last test and test metrics, summed over processes, to CSV, file is complete after every row
         """
-        train, test = self.train_sums.tolist(), self.test_sums.tolist()
+        train = self.trainer.strategy.reduce(self.train_sums, reduce_op="sum").tolist()
+        test = self.trainer.strategy.reduce(self.test_sums, reduce_op="sum").tolist()
+        self.train_sums.zero_()
+        self.test_sums.zero_()
+        if not self.trainer.is_global_zero:
+            return
         elapsed = time.perf_counter() - self.start
         it = self.global_step
         row = {
@@ -249,8 +309,6 @@ class SuperConvergence(L.LightningModule):
             eta = elapsed / it * (self.cfg["max_iter"] - it)
             print(f"{self.out.stem} iteration {it}/{self.cfg['max_iter']} lr {row['lr']:.4f} train_acc {row['train_acc']:.4f} "
                   f"test_acc {row['test_acc']:.4f} elapsed {elapsed / 3600:.2f} h eta {eta / 3600:.2f} h", flush=True)
-        self.train_sums.zero_()
-        self.test_sums.zero_()
 
     def configure_optimizers(self) -> dict:
         """
@@ -269,42 +327,36 @@ class SuperConvergence(L.LightningModule):
 
 def main() -> None:
     """
-    Train selected runs, write results/<run>.csv (one row per test) and results/<run>.json (config and environment)
+    Train selected runs on all visible GPUs, write results/<run>.csv (one row per test) and results/<run>.json (config and environment)
     """
     parser = argparse.ArgumentParser()
     parser.add_argument("runs", nargs="+", choices=list(RUNS))
-    parser.add_argument("--max-hours", type=float, help="stop each run after this many hours of training, for sessions with a time limit (Kaggle: 12 h)")
+    parser.add_argument("--max-hours", type=float,
+                        help="stop when this many hours have passed since start, the run in progress ends early, for sessions with a time limit (Kaggle: 12 h)")
     args = parser.parse_args()
+    deadline = time.monotonic() + args.max_hours * 3600 if args.max_hours else None
 
     torch.backends.cudnn.allow_tf32 = False # so that FP32 means FP32 on Ampere and newer GPUs
     torch.backends.cuda.matmul.allow_tf32 = False
     RESULTS.mkdir(exist_ok=True)
-    cuda = torch.cuda.is_available()
-    env = {
-        "gpu": torch.cuda.get_device_name(0) if cuda else "cpu",
-        "cuda": torch.version.cuda,
-        "cudnn": torch.backends.cudnn.version() if cuda else None,
-        "torch": torch.__version__,
-        "lightning": L.__version__,
-        "python": platform.python_version(),
-    }
-    print(json.dumps(env, indent=2))
+    devices = max(torch.cuda.device_count(), 1)
+    if GPUS % devices:
+        raise SystemExit(f"{devices} GPUs can't share the paper's {GPUS} BN chunks evenly, select 1, 2, 4 or 8 with CUDA_VISIBLE_DEVICES")
 
     x_train, y_train = load_cifar(train=True)
     x_test, y_test = load_cifar(train=False)
     mean = x_train.float().mean(0) # mean.binaryproto of the full training set, Table 1 runs only swap the train LMDB
     for name in args.runs:
         cfg = RUNS[name]
-        print(name, cfg, flush=True)
-        (RESULTS / f"{name}.json").write_text(json.dumps({"config": cfg, "env": env}, indent=2))
         n = cfg["train_size"] # first n images, the paper doesn't say which ones its smaller LMDBs hold
         L.seed_everything(SEED)
-        module = SuperConvergence(cfg, mean, RESULTS / f"{name}.csv")
+        module = SuperConvergence(cfg, mean, TensorDataset(x_train[:n], y_train[:n]), TensorDataset(x_test, y_test), RESULTS / f"{name}.csv")
         trainer = L.Trainer(
             max_steps=cfg["max_iter"],
             max_epochs=-1, # length is set in iterations like in Caffe
-            max_time=timedelta(hours=args.max_hours) if args.max_hours else None, # Lightning tests once more at the stop
-            devices=1, # one process, the paper's 8 GPUs are GhostBatchNorm2d chunks, "auto" would start DDP on a multi-GPU machine
+            max_time=timedelta(seconds=deadline - time.monotonic()) if deadline else None, # Lightning tests once more at the stop
+            devices=devices, # more than 1 starts DDP, Lightning reruns this script for every other GPU
+            use_distributed_sampler=False, # train_batches and TestBatches split batches between processes themselves
             val_check_interval=TEST_INTERVAL,
             check_val_every_n_epoch=None, # count val_check_interval in iterations across epochs
             num_sanity_val_steps=0,
@@ -314,9 +366,7 @@ def main() -> None:
             enable_checkpointing=False,
             enable_progress_bar=False, # one bar per epoch floods notebook output, on_validation_epoch_end prints progress
         )
-        train_loader = DataLoader(TensorDataset(x_train[:n], y_train[:n]), sampler=train_batches(n), batch_size=None, pin_memory=cuda)
-        test_loader = DataLoader(TensorDataset(x_test, y_test), sampler=TestBatches(len(x_test)), batch_size=None, pin_memory=cuda)
-        trainer.fit(module, train_loader, test_loader)
+        trainer.fit(module)
 
 
 if __name__ == "__main__":
