@@ -256,18 +256,9 @@ class SuperConvergence(L.LightningModule):
             "lightning": L.__version__,
             "python": platform.python_version(),
         }
-        print(self.out.stem, json.dumps({"config": self.cfg, "env": env}), flush=True)
         self.out.with_suffix(".json").write_text(json.dumps({"config": self.cfg, "env": env}, indent=2))
         with open(self.out, "w", newline="") as f:
             csv.DictWriter(f, fieldnames=FIELDS).writeheader()
-
-    def on_validation_epoch_start(self) -> None:
-        """
-        Copy BN running stats of the first process to the others, Caffe tests with the root GPU's stats
-        """
-        if self.trainer.world_size > 1:
-            for b in self.model.buffers():
-                torch.distributed.broadcast(b, src=0)
 
     def on_validation_epoch_end(self) -> None:
         """
