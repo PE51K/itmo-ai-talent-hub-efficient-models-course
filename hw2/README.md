@@ -42,7 +42,7 @@ The official repo [lnsmith54/super-convergence](https://github.com/lnsmith54/sup
 - Test: every 100 iterations on 200 batches x 125 = 25,000 images. The test set has 10,000, so Caffe wraps around and continues from where the previous test stopped, and `TestBatches` does the same.
 - FP32 with TF32 off.
 
-`train.py` runs one process per GPU (1, 2, 4 or 8). Each process takes 8 / GPUs of the 125-image chunks of every batch, gradients are averaged over processes, and the BN running stats of the first process are used for tests. Random flips are drawn for the whole batch and split the same way. In float64 on CPU, 1 and 2 processes give the same test accuracy at every test of a short run.
+`train.py` runs one process per GPU (1, 2, 4 or 8). Each process takes 8 / GPUs of the 125-image chunks of every batch, gradients are averaged over processes, and the BN running stats of the first process are used for tests. Random flips are drawn for the whole batch and split the same way. So 1, 2, 4 or 8 GPUs compute the same updates, up to the order of summation when gradients are averaged.
 
 Environment: Kaggle, 2 x Tesla T4, CUDA 12.8, cuDNN 9.19, PyTorch 2.11.0, Lightning 2.6.6, Python 3.13.15, seed 0, one run per configuration. Config and environment of every run are in `results/<run>.json`.
 
