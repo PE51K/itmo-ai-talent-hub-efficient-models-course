@@ -119,56 +119,44 @@
 \end{frame}
 
 \begin{frame}{Reproduction setup}
-  The official repo has the Caffe prototxt files and the authors' training logs. Following them:
+  Following the authors' Caffe files and logs from the official repo:
   \begin{itemize}
     \item ResNet-56 from \texttt{Resnet56Cifar.prototxt}, FP32, PyTorch + Lightning
-    \item Batch 1000 = 8 GPUs $\times$ 125: BN normalizes every 125 images separately, running stats from the first GPU
-    \item Caffe SGD: LR inside momentum, weight decay $10^{-4}$ on all parameters
-    \item No shuffling, only random flips, mean image subtracted
-    \item Test every 100 iterations on 25,000 images, wrapping around the test set as Caffe does
-    \item Kaggle, 2 $\times$ T4, one process per GPU, same results as on one GPU
+    \item Batch 1000 = 8 GPUs $\times$ 125: BN normalizes every 125 images separately
+    \item Caffe SGD and LR policies, weight decay $10^{-4}$, no shuffling, random flips
+    \item Kaggle, 2 $\times$ T4, one run per configuration
   \end{itemize}
 \end{frame}
 
 \begin{frame}{Results}
   \begin{columns}[T]
-    \column{0.45\textwidth}
+    \column{0.42\textwidth}
     \small
     \begin{tabular}{lrrr}
       \toprule
-      Run & Paper & Authors' log & Ours \\
+      Accuracy, \% & Paper & Log & Ours \\
       \midrule
       CLR, 10k it. & 92.4 & 92.4 & 91.8 \\
       PC-LR, 80k it. & 91.2 & 90.3 & 91.5 \\
       \bottomrule
     \end{tabular}
-
-    \medskip
+    \column{0.55\textwidth}
+    \small
     \begin{itemize}
-      \item CLR: 0.92 h, PC-LR: 7.40 h on 2 $\times$ T4
-      \item PC-LR reaches 90\,\% only at iteration 70,500
-      \item Range test: 0.7--0.8 up to LR 3, as in the paper
+      \item 0.92 h vs 7.40 h on 2 $\times$ T4
+      \item Our curves (blue) follow the authors' logs (gray), their PC-LR log is 0.9 below their paper
     \end{itemize}
-    \column{0.52\textwidth}
-    \includegraphics[width=\textwidth]{results/figures/fig1a.png}
   \end{columns}
-\end{frame}
-
-\begin{frame}{Comparison with the authors' logs}
+  \medskip
   \includegraphics[width=\textwidth]{results/figures/authors_logs.png}
-
-  \begin{itemize}
-    \item Curves follow the authors' Caffe runs within test-to-test noise
-    \item Their own PC-LR log ends 0.9 points below the paper: differences of this size show up between runs
-  \end{itemize}
 \end{frame}
 
 \begin{frame}{Conclusions}
   \begin{itemize}
-    \item Reproduced: one LR cycle up to 3 matches 80,000 iterations of typical training in 10,000 iterations, 8 times less GPU time
+    \item Reproduced: one LR cycle up to 3 matches 80,000 iterations of typical training in 10,000
     \item Reproduced: the LR range test stays flat up to LR 3
-    \item Not reproduced for lack of GPU time: the reduced training set runs of Table 1 (the 10,000-sample ones are implemented), other stepsizes, the LR estimate of Section 4, other datasets and architectures
-    \item Code, results and report: \url{https://github.com/PE51K/itmo-ai-talent-hub-efficient-models-course/tree/main/hw2}
+    \item Not reproduced for lack of GPU time: Table 1, other stepsizes, the LR estimate, other datasets
+    \item \url{https://github.com/PE51K/itmo-ai-talent-hub-efficient-models-course/tree/main/hw2}
   \end{itemize}
 \end{frame}
 
