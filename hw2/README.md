@@ -52,10 +52,10 @@ Environment: Kaggle, 2 x Tesla T4, CUDA 12.8, cuDNN 9.19, PyTorch 2.11.0, Lightn
 |---|---|---|---|---|---|
 | `clr` | 92.4 | 92.4 | 91.8 | 91.8 | 0.92 |
 | `pc_lr` | 91.2 | 90.3 | 91.5 | 91.5 | 7.40 |
-| `clr_10k` | 80.6 | 80.6 | not run | | |
-| `pc_lr_10k` | 71.4 | 71.2 | not run | | |
+| `clr_10k` | 80.6 | 80.6 | not reproduced | | |
+| `pc_lr_10k` | 71.4 | 71.2 | not reproduced | | |
 
-Final test accuracy after the last iteration. "Authors' log" is the last test in the `Results/` logs of the official repo. The 10k runs are version 2 of the Kaggle notebook and haven't been run yet.
+Final test accuracy after the last iteration. "Authors' log" is the last test in the `Results/` logs of the official repo. The 10k runs are implemented (version 2 of the Kaggle notebook) but not reproduced for lack of GPU time.
 
 ![Fig. 1a](results/figures/fig1a.png)
 
@@ -73,14 +73,14 @@ Our curves next to the authors' Caffe logs of the same runs. They follow each ot
 
 The main claim holds: one LR cycle up to 3 trains ResNet-56 to the accuracy of 80,000-iteration PC-LR in 10,000 iterations. The LR range test shows why: the network keeps training at LRs 10-30 times larger than usual, so a short schedule can spend most of its iterations at large LRs.
 
-In the CLR run, test accuracy jumps between 0.5 and 0.85 while LR is above 1 and grows from 0.81 to 0.92 in the last 2,000 iterations, when LR goes back down to 0.1. Both runs end at 100 % training accuracy and within 0.3 points of each other on test, so on 50,000 samples the gain is in iterations, not in final accuracy. The paper's Table 1 says the gap grows as the training set shrinks, which the 10k runs would check.
+In the CLR run, test accuracy jumps between 0.5 and 0.85 while LR is above 1 and grows from 0.81 to 0.92 in the last 2,000 iterations, when LR goes back down to 0.1. Both runs end at 100 % training accuracy and within 0.3 points of each other on test, so on 50,000 samples the gain is in iterations, not in final accuracy. The paper's Table 1 says the gap grows as the training set shrinks, this part isn't reproduced.
 
 Not reproduced, for lack of GPU time:
 
 - Fig. 1b: CLR with other stepsizes.
 - Fig. 2b: the 20k and 100k range tests.
 - Fig. 5: the learning rate estimate from Section 4.
-- Table 1: the rows with 20,000-40,000 samples.
+- Table 1: all reduced training set rows, 10,000-40,000 samples. The 10,000-sample runs are implemented, `clr_10k` and `pc_lr_10k`.
 - Section 5: other datasets, architectures and batch sizes, and the regularization experiments.
 
 ## Reproduce
