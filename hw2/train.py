@@ -218,7 +218,7 @@ class SuperConvergence(L.LightningModule):
             batch_idx: batch index in test
         """
         x, y = batch
-        logits = self.model(self.preprocess(x))
+        logits = self.model(self.preprocess(x)) # DDP copies rank 0's buffers before every forward, all processes test with its BN stats
         self.test_sums[0] += F.cross_entropy(logits, y, reduction="sum")
         self.test_sums[1] += (logits.argmax(1) == y).sum()
         self.test_sums[2] += len(y)
