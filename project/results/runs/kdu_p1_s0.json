@@ -1,0 +1,21 @@
+{
+ "model": "student",
+ "subset": "p1",
+ "texts": "all",
+ "teacher": "teacher_p1",
+ "seed": 0,
+ "model_name": "jhu-clsp/ettin-encoder-17m",
+ "steps": 10525,
+ "n_labeled": 673,
+ "n_texts": 67349,
+ "labeled_positive": 0.5423476968796433,
+ "train_time": 292.23769783973694,
+ "acc": 0.8451834862385321,
+ "f1": 0.8446490218642118,
+ "env": {
+  "torch": "2.11.0+cu128",
+  "transformers": "5.16.1",
+  "python": "3.13.15",
+  "device": "Tesla T4"
+ }
+}

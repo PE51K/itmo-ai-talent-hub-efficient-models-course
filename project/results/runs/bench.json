@@ -1,0 +1,23 @@
+{
+ "teacher": {
+  "model": "jhu-clsp/ettin-encoder-400m",
+  "params": 395833346,
+  "embedding_params": 51576832,
+  "cpu_batch32_s": 6.042292361001273,
+  "gpu_sentences_per_s": 312.066573817695
+ },
+ "student": {
+  "model": "jhu-clsp/ettin-encoder-17m",
+  "params": 16863746,
+  "embedding_params": 12894208,
+  "cpu_batch32_s": 0.09262737150038447,
+  "gpu_sentences_per_s": 3349.625007938892
+ },
+ "cpu_threads": 2,
+ "env": {
+  "torch": "2.11.0+cu128",
+  "transformers": "5.16.1",
+  "python": "3.13.15",
+  "device": "Tesla T4"
+ }
+}
