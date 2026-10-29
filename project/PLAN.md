@@ -1,80 +1,82 @@
-# Project plan: knowledge distillation into a tiny model on 10% of the data
+# Plan: knowledge distillation into a 17M encoder with 10% of the labels
 
-Topic from the course list: "Data-Efficient Training — Knowledge Distillation от большой к tiny модели на маленьком 10% данных". Deadline and defense: 05.12.2026, 10 minutes per team, 10 points.
+Course topic: "Data-Efficient Training — Knowledge Distillation от большой к tiny модели на маленьком 10% данных". Submission and defense: 05.12.2026, 10 minutes per team. The course requires code with a README that reproduces the results (a Dockerfile with pinned dependencies is a plus) and detailed slides: motivation, plan of work, libraries, a review of the papers used, results, conclusions and next steps.
 
-## What the course asks for
+## Method
 
-- Code in a repository with a README that reproduces the results. A Dockerfile with pinned dependencies or an image on Docker Hub is a plus.
-- The README has everything the slides have, shorter, plus how to run and the results.
-- Detailed slides: motivation, plan of work, frameworks and libraries, a review of the papers used, results, and conclusions with next steps (this part can take several slides). Slides that don't fit in 10 minutes can be left for offline reading.
+Knowledge distillation (KD, [Hinton et al., 2015](https://arxiv.org/abs/1503.02531)) trains a small student model to match the output distribution of a large teacher model, in addition to or in place of gold labels. The teacher's probabilities over classes carry more information per example than a one-hot label, and the teacher can label texts that have no gold label. The project measures how much of the gap between a student trained on 10% of the labels and a student trained on 100% of them KD closes.
 
-## Previous iterations
+The budget is gold labels for 10% of the SST-2 train set (6,735 of 67,349 sentences). The other 90% of the sentences are available without labels. The GLUE validation split (872 sentences) is the test set, because GLUE test labels are hidden. There is no dev set: every run uses fixed hyperparameters and is evaluated at its last step.
 
-ITMO 2025 had three projects on data-efficient training, links in the [2025 README](https://github.com/On-Point-RND/Efficient-Models-course-ITMO-2025). The course doesn't publish grades, so what got marks has to be read from the criteria and from what the projects show. The SHAD 2026 iteration has one NAS + KD project ([binary-wolfishness/nas-kd](https://github.com/binary-wolfishness/nas-kd/tree/nas-evolution-kd-hinton)) on NATS-Bench with ResNet students; its slides are a Git LFS file that didn't download.
-
-| Project | Model, data | Methods | Full data | Random 10% | Best 10% |
-|---|---|---|---|---|---|
-| [ITMO-EDLM/data-efficiency](https://github.com/ITMO-EDLM/data-efficiency), [slides](https://docs.google.com/presentation/d/1ezU5i-dlzWrnJaix4gswlcNKfJifOUsj3TPGTdwMOnY) (our exact topic) | ModernBERT-base, SST-2 | 10 selection strategies, ClearML, HP search for the full run | 0.947 | 0.758 | 0.921 (entropy + k-center) |
-| [IsachenkoBogdan/llm-data-selection-bert](https://github.com/IsachenkoBogdan/llm-data-selection-bert), [slides](https://docs.google.com/presentation/d/1WH8Rehl0b8xZYDhjvW41tIw_-lu6J7JcqxJvmUXBJgc) | bert-tiny, SST-2 | quality / diversity / importance selectors, LLM-as-judge, Hydra + Snakemake + W&B | 0.819 | 0.747 | 0.792 (quality + diversity) |
-| [Bovrrr/...-train-data-sampling](https://github.com/Bovrrr/itmo-edlm-course-project-train-data-sampling), [slides](https://docs.google.com/presentation/d/1uBuXALY-gL28Q0zb4bIBhyf6BZderT-Bjen2o7VacJg) | ModernBERT-base, SST-2 | random, high/low confidence, k-means, 5% random + 5% hard | 0.951 | 0.921 | 0.929 (k-means) |
-
-What they have in common: all three are about choosing which 10% to train on. None of them distills: the exact-topic repo has no teacher and only a CE / BCE loss (`src/data_efficiency/utils/loss.py`). So the KD part of our topic is still open, and it's what we build the project around.
-
-What to take from them:
-
-- The slide structure that worked: survey-based taxonomy of methods (Qin et al., [Unleashing the Power of Data Tsunami](https://arxiv.org/abs/2408.02085)), one slide per method with a scheme, a results table, conclusions, future work. The bert-tiny team also reported selection compute time next to accuracy, which fits an efficiency course.
-- SST-2 with accuracy / F1 on the GLUE validation split. Using it again makes our numbers directly comparable to theirs.
-- Their findings to check under KD: random is a strong baseline, diversity-based selection beats confidence-based, "easy" subsets (low perplexity, high confidence) hurt.
-
-What to avoid:
-
-- An undertuned random baseline. The same ModernBERT-base on random 10% gets 0.758 in one project and 0.921 in another, which turns "97% of full quality" into a 0.004 gain over random. We tune the baseline with the same budget as every other run.
-- One run per configuration. On 6.7k examples a few points move between seeds; we report mean ± std over 3 seeds.
-- READMEs without a run command for the results, `__pycache__` committed, results only in screenshots.
-
-## Setup
-
-GPU is only Colab and Kaggle (T4, 16 GB, fp16, no bf16), same as HW2. Everything has to fit in a Kaggle session (12 h) and resume from a checkpoint.
-
-- Task: GLUE SST-2, 67k train sentences. Validation (872) is the test set, since GLUE test labels are hidden. A dev split for early stopping and HP search is carved from the training pool.
-- Budget: labels for 10% of the train set (6.7k). The other 90% of the sentences are available without labels; in practice unlabeled text is cheap and labels are not. Every configuration states which of the two it uses.
-- Teacher: a large encoder fine-tuned on the 10% labels only, e.g. ModernBERT-large or RoBERTa-large (335M-395M). Pick in week 1 by whichever trains stably in fp16 on a T4. A teacher trained on full data is reported separately as a reference, since it uses labels outside the budget.
-- Student: `google/bert_uncased_L-2_H-128_A-2` (bert-tiny, 4.4M) as the main one, `L-4_H-256` (bert-mini, 11M) as the second size. These are the compact models from [Well-Read Students Learn Better](https://arxiv.org/abs/1908.08962).
-- Metrics: accuracy and F1, plus parameters, CPU latency per batch, training and teacher inference time. Teacher-vs-student compression and speed-up go on the summary slide.
-
-## Experiments
-
-Ordered by priority. 1-4 are the minimum project, 5-6 are what makes it more than a rerun of 2025, 7 if time is left.
-
-1. Baselines, student with hard labels: random 10% and 100%. Same tuning budget for both.
-2. Teacher on 10%; also the full-data teacher as a reference.
-3. Logit KD on the same 10% ([Hinton et al., 2015](https://arxiv.org/abs/1503.02531)): CE + KL on softened logits, sweep T and alpha.
-4. KD on unlabeled data: the teacher labels the other 90% with soft targets, the student trains on 10% gold + 90% soft. This is the main hypothesis: with a 10% label budget, distillation through unlabeled text recovers most of the gap to 100%. Related: [Tang et al., 2019](https://arxiv.org/abs/1903.12136), [Noisy Student](https://arxiv.org/abs/1911.04252).
-5. Selection + KD: which 10% to label, given that a teacher will be trained on them. Random, k-center ([Sener & Savarese, 2018](https://arxiv.org/abs/1708.00489)) and entropy + diversity, the best strategy from 2025. Does selection still matter once the student also sees the soft-labeled rest?
-6. Intermediate-layer distillation, hidden states and attention as in [TinyBERT](https://arxiv.org/abs/1909.10351), vs logits only. Needs a projection, since the student's hidden size is 128 or 256.
-7. Data-size curve: 1%, 5%, 10%, 25% labels for the best KD setup vs hard-label training.
-
-Optional: quantize the best student to int8 on CPU (lecture 5) for one more latency row.
-
-## Papers for the review slides
-
-- KD: [Hinton et al., 2015](https://arxiv.org/abs/1503.02531); [DistilBERT](https://arxiv.org/abs/1910.01108); [TinyBERT](https://arxiv.org/abs/1909.10351); [MiniLM](https://arxiv.org/abs/2002.10957); [Well-Read Students Learn Better](https://arxiv.org/abs/1908.08962); [Beyer et al., 2022, a good teacher is patient and consistent](https://arxiv.org/abs/2106.05237); [Stanton et al., 2021, Does KD really work?](https://arxiv.org/abs/2106.05945).
-- Unlabeled data and self-training: [Tang et al., 2019](https://arxiv.org/abs/1903.12136); [Noisy Student](https://arxiv.org/abs/1911.04252).
-- Data selection: [Qin et al., survey](https://arxiv.org/abs/2408.02085); [core-set / k-center](https://arxiv.org/abs/1708.00489); [Data Diet, EL2N](https://arxiv.org/abs/2107.07075).
-
-## Timeline
-
-Six weeks from 24.10. The data-efficiency lecture is on 09.11.
-
-| Week | Dates | Work |
+| Role | Model | Parameters |
 |---|---|---|
-| 1 | 26.10-01.11 | Pipeline: data split, train/eval for teacher and student, Kaggle notebook with resume. Pick the teacher. Experiments 1-2 |
-| 2 | 02.11-08.11 | Experiments 3-4, T / alpha sweep |
-| 3 | 09.11-15.11 | Experiment 5 |
-| 4 | 16.11-22.11 | Experiment 6, 7 if time is left. Freeze the result set |
-| 5 | 23.11-29.11 | Figures, README, Dockerfile, slides with the paper review |
-| 6 | 30.11-05.12 | Rerun from README on a clean Kaggle session, rehearse the 10-minute talk |
+| Teacher | [`jhu-clsp/ettin-encoder-400m`](https://huggingface.co/jhu-clsp/ettin-encoder-400m) | 400M |
+| Student | [`jhu-clsp/ettin-encoder-17m`](https://huggingface.co/jhu-clsp/ettin-encoder-17m) | 17M, of them 12.9M in the embedding matrix |
 
-## Repository
+Both are Ettin encoders ([Weller et al., 2025](https://arxiv.org/abs/2507.11412)): the ModernBERT architecture ([Warner et al., 2024](https://arxiv.org/abs/2412.13663)) trained with one recipe and one tokenizer at sizes from 17M to 1B. The 1B encoder does not fit a T4 for fine-tuning with AdamW in fp16.
 
-`train.py` with one config per experiment, results as CSV / JSON in `results/` and figures from `plots.py`, as in HW2. A Kaggle notebook runs the experiment list, a Colab one runs a single config. Dockerfile with pinned versions from `uv.lock`. If teammates need write access, this folder moves to a separate team repository.
+The student loss is `(1 - a) * CE(student, gold) + a * T^2 * KL(teacher_T || student_T)` with `a = 0.5` and temperature `T = 2`; CE (cross-entropy) is averaged over the examples of a batch that have a gold label, KL over all of them. Without a teacher, `a = 0`.
+
+| Config | Labeled examples | Training texts | Teacher |
+|---|---|---|---|
+| `teacher_p10` | random 10% | the labeled 10% | none |
+| `hard_p10` | random 10% | the labeled 10% | none |
+| `kd_p10` | random 10% | the labeled 10% | `teacher_p10` |
+| `kdu_p10` | random 10% | all 67,349 | `teacher_p10` |
+| `hard_p100` | 100% | all 67,349 | none |
+| `kd_p100` | 100% | all 67,349 | `teacher_p100` |
+
+The same configs at 1%, 5%, and 25% give the label curve; `hard_kc10` and `kdu_kc10` replace the random 10% by k-center greedy selection ([Sener & Savarese, 2018](https://arxiv.org/abs/1708.00489)) on mean-pooled embeddings of the pretrained teacher. The random subsets are nested: the 1% is inside the 5%, the 10%, and the 25%.
+
+Hyperparameters: AdamW, weight decay 0.01, linear warmup over 6% of steps and linear decay, batch 32, fp16 autocast. Teacher: LR 3e-5, 3 epochs. Student: LR 1e-4, 5 epochs. A run takes at least 300 steps, which gives the 1% and 5% subsets more epochs. Student configs run with seeds 0, 1, 2; teacher configs with seed 0.
+
+## Questions and the comparisons that answer them
+
+1. How much does KD recover at a 10% label budget? Gap closed = `(kdu_p10 - hard_p10) / (hard_p100 - hard_p10)` on test accuracy.
+2. Does the gain come from the teacher's soft labels on the same examples or from the unlabeled 90%? `kd_p10` vs `kdu_p10`.
+3. How does the gain change with the label budget? `hard` vs `kdu` at 1%, 5%, 10%, 25%.
+4. Does selecting which 10% to label still matter under KD? `hard_kc10 - hard_p10` vs `kdu_kc10 - kdu_p10`.
+5. What does the student cost compared to the teacher? Parameters, CPU latency for a batch of 32, T4 throughput.
+
+A difference counts as a result when it exceeds the sum of the two standard deviations over seeds.
+
+## Code
+
+| File | Content |
+|---|---|
+| `kd.py` | Data, training, KD loss, k-center, benchmark, the list of runs. Writes `results/runs/<run>.json`, teacher logits to `results/logits/`, k-center indices to `results/subsets/`. |
+| `plots.py` | `results/summary.md` (mean ± std per config) and `results/figures/label_curve.png`. |
+| `kd_kaggle.ipynb` | Runs `kd.py` on Kaggle or Colab, resumes from earlier results, zips `results/`. |
+
+`uv run python kd.py --smoke` checks the whole pipeline on CPU in a few minutes: 2,000 train sentences, the 17M model as its own teacher, one seed, results in `results_smoke/`.
+
+## Five days
+
+Day 1. Push the code. On Kaggle, run the notebook interactively with `RUNS = "teacher_p10 hard_p10_s0 kdu_p10_s0"` and check that losses are finite in fp16, the teacher reaches at least 90% test accuracy, and the measured run times fit the 12-hour session. Then start the full version with Save & Run All.
+
+Day 2. Download the output of the full version. If it stopped before `bench`, add its output as input to a new version and run it again; finished runs are skipped. Check the results: `teacher_p100` at 95% test accuracy or higher (ModernBERT-large reports 97.1% on SST-2), the seeds of one config within about 1 point.
+
+Day 3. Answer questions 1-5 from `results/summary.md` and the label curve. Write the README report: setup, results table, figure, benchmark, how to reproduce. Rerun any config whose seeds disagree by more than 2 points with 2 more seeds.
+
+Day 4. Slides: motivation, the method with the loss, the papers, setup, the 10% table, the label curve, selection under KD, cost of teacher vs student, conclusions, next steps. Compare with the 2025 projects on the same task (table below).
+
+Day 5. Dockerfile with versions pinned from `uv.lock`. Rerun `teacher_p10`, `hard_p10_s0`, `kdu_p10_s0` from the README instructions in a clean Kaggle session and check the numbers match within the seed spread. Rehearse the talk to 10 minutes.
+
+## Previous projects on SST-2 with a 10% budget
+
+The 2025 ITMO course had three projects on training with 10% of SST-2 ([course README](https://github.com/On-Point-RND/Efficient-Models-course-ITMO-2025)). All three compared data selection strategies with cross-entropy training; none used a teacher.
+
+| Project | Model | 100% | Random 10% | Best 10% |
+|---|---|---|---|---|
+| [ITMO-EDLM/data-efficiency](https://github.com/ITMO-EDLM/data-efficiency) | ModernBERT-base | 94.7 | 75.8 | 92.1, entropy + k-center |
+| [IsachenkoBogdan/llm-data-selection-bert](https://github.com/IsachenkoBogdan/llm-data-selection-bert) | bert-tiny, 4.4M | 81.9 | 74.7 | 79.2, quality + diversity |
+| [Bovrrr/itmo-edlm-course-project-train-data-sampling](https://github.com/Bovrrr/itmo-edlm-course-project-train-data-sampling) | ModernBERT-base | 95.1 | 92.1 | 92.9, k-means |
+
+Accuracy in %, one run per config in each project. The two ModernBERT-base projects report random 10% at 75.8 and 92.1 for the same model and data.
+
+## Papers for the review
+
+- KD: [Hinton et al., 2015](https://arxiv.org/abs/1503.02531); [DistilBERT](https://arxiv.org/abs/1910.01108); [TinyBERT](https://arxiv.org/abs/1909.10351); [MiniLM](https://arxiv.org/abs/2002.10957); [Turc et al., 2019, Well-Read Students Learn Better](https://arxiv.org/abs/1908.08962); [Beyer et al., 2022, a good teacher is patient and consistent](https://arxiv.org/abs/2106.05237); [Stanton et al., 2021, Does knowledge distillation really work?](https://arxiv.org/abs/2106.05945).
+- Distillation through unlabeled text: [Tang et al., 2019](https://arxiv.org/abs/1903.12136); [Noisy Student](https://arxiv.org/abs/1911.04252).
+- Models: [ModernBERT](https://arxiv.org/abs/2412.13663); [Ettin](https://arxiv.org/abs/2507.11412).
+- Data selection: [Sener & Savarese, 2018](https://arxiv.org/abs/1708.00489); [Qin et al., 2024, survey](https://arxiv.org/abs/2408.02085).

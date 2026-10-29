@@ -2,3 +2,4 @@ __pycache__/
 .venv
 hw2/data/
 hw2/paper/
+project/results_smoke/
