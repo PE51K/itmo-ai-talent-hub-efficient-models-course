@@ -10,6 +10,10 @@
 | Student, CE, 100% labels | `hard_p100` | 89.5 ± 0.6 | 89.8 ± 0.5 | 3 |
 | Student, KD, 100% labels | `kd_p100` | 89.0 ± 0.3 | 89.4 ± 0.3 | 3 |
 
+| Student | `hard_p10`, % | `kdu_p10`, % | `hard_p100`, % |
+|---|---|---|---|
+| Ettin-encoder-17m | 84.3 ± 1.3 | 88.1 ± 0.2 | 89.5 ± 0.6 |
+
 | Model | Params, M | Non-embedding params, M | CPU, batch of 32, ms | T4, sentences/s |
 |---|---|---|---|---|
 | `jhu-clsp/ettin-encoder-400m` | 395.8 | 344.3 | 6042 | 312 |

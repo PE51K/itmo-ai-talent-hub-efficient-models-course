@@ -13,12 +13,16 @@ ROWS = [
     ("hard_p10", "Student, CE, 10% labels"),
     ("kd_p10", "Student, KD on the 10%"),
     ("kdu_p10", "Student, KD on all texts, 10% labels"),
+    ("kdu_p10_t1", "Student, KD on all texts, 10% labels, T = 1"),
+    ("kdu_p10_t4", "Student, KD on all texts, 10% labels, T = 4"),
+    ("kdu_p10_a1", "Student, KD on all texts, 10% labels, KL only"),
     ("hard_kc10", "Student, CE, k-center 10%"),
     ("kdu_kc10", "Student, KD on all texts, k-center 10%"),
     ("hard_p100", "Student, CE, 100% labels"),
     ("kd_p100", "Student, KD, 100% labels"),
 ]
 CURVE = [1, 5, 10, 25, 100]
+SIZES = ["17m", "32m", "68m"]
 
 
 def load(results: Path) -> dict[str, list[dict]]:
@@ -27,7 +31,7 @@ def load(results: Path) -> dict[str, list[dict]]:
     """
     groups = {}
     for path in sorted((results / "runs").glob("*.json")):
-        if path.stem != "bench":
+        if not path.stem.startswith("bench"):
             groups.setdefault(re.sub(r"_s\d+$", "", path.stem), []).append(json.loads(path.read_text()))
     return groups
 
@@ -46,14 +50,24 @@ def table(groups: dict) -> str:
     return "\n".join(lines)
 
 
+def size_table(groups: dict) -> str:
+    lines = ["| Student | `hard_p10`, % | `kdu_p10`, % | `hard_p100`, % |", "|---|---|---|---|"]
+    for size in SIZES:
+        keys = [k if size == "17m" else f"{k}_{size}" for k in ["hard_p10", "kdu_p10", "hard_p100"]]
+        if any(k in groups for k in keys):
+            lines.append(f"| Ettin-encoder-{size} | " + " | ".join(cell(groups[k], "acc") if k in groups else "" for k in keys) + " |")
+    return "\n".join(lines)
+
+
 def bench_table(results: Path) -> str:
-    path = results / "runs" / "bench.json"
-    if not path.exists():
+    paths = [results / "runs" / f"{n}.json" for n in ["bench_sizes", "bench"]]
+    paths = [p for p in paths if p.exists()]
+    if not paths:
         return ""
-    b = json.loads(path.read_text())
+    b = json.loads(paths[0].read_text())
     lines = ["| Model | Params, M | Non-embedding params, M | CPU, batch of 32, ms | T4, sentences/s |", "|---|---|---|---|---|"]
-    for role in ["teacher", "student"]:
-        r = b[role]
+    # bench.json of the first Kaggle run is keyed by role, later ones by checkpoint
+    for r in [v for v in b.values() if isinstance(v, dict) and "model" in v]:
         gpu = f"{r['gpu_sentences_per_s']:.0f}" if "gpu_sentences_per_s" in r else ""
         lines.append(f"| `{r['model']}` | {r['params'] / 1e6:.1f} | {(r['params'] - r['embedding_params']) / 1e6:.1f} | {r['cpu_batch32_s'] * 1000:.0f} | {gpu} |")
     return "\n".join(lines) + f"\n\nCPU latency with {b['cpu_threads']} PyTorch threads, GPU: {b['env']['device']}."
@@ -91,7 +105,7 @@ def main() -> None:
     groups = load(args.results)
     (args.results / "figures").mkdir(exist_ok=True)
     curve(groups, args.results / "figures" / "label_curve.png")
-    summary = table(groups) + "\n\n" + bench_table(args.results)
+    summary = table(groups) + "\n\n" + size_table(groups) + "\n\n" + bench_table(args.results)
     (args.results / "summary.md").write_text(summary + "\n")
     print(summary)
 

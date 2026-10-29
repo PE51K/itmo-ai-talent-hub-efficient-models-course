@@ -16,6 +16,7 @@ from transformers import AutoModel, AutoModelForSequenceClassification, AutoToke
 
 TEACHER = "jhu-clsp/ettin-encoder-400m"
 STUDENT = "jhu-clsp/ettin-encoder-17m" # same tokenizer as the teacher
+LARGER_STUDENTS = ["jhu-clsp/ettin-encoder-32m", "jhu-clsp/ettin-encoder-68m"]
 HP = {
     "teacher": {"lr": 3e-5, "epochs": 3},
     "student": {"lr": 1e-4, "epochs": 5},
@@ -34,21 +35,33 @@ RESULTS = Path(__file__).parent / "results"
 
 def run_list() -> dict[str, dict]:
     """
-    All runs in execution order: the 10% table first, then KD with full labels, the label curve, k-center
+    All runs in execution order: the 10% table, KD with full labels, the label curve, k-center,
+    then teacher seeds, KD temperature and weight, and larger students
 
-    A run is {model, subset, texts, teacher, seed}:
+    A run is {model, checkpoint, subset, texts, teacher, temperature, alpha, seed}:
+        model: "teacher" or "student", selects the hyperparameters in HP
         subset: which train examples have gold labels, "p10" is a random 10%, "kc10" is k-center 10%
         texts: "subset" trains on the labeled examples only, "all" also on the rest without gold labels
         teacher: run whose logits the student distills, None for CE on gold labels only
     """
     runs = {}
 
-    def teacher(subset):
-        runs[f"teacher_{subset}"] = {"model": "teacher", "subset": subset, "texts": "subset", "teacher": None, "seed": 0}
+    def teacher(subset, seed=0):
+        name = f"teacher_{subset}" + (f"_s{seed}" if seed else "")
+        runs[name] = {"model": "teacher", "checkpoint": TEACHER, "subset": subset, "texts": "subset", "teacher": None, "temperature": TEMPERATURE, "alpha": 0.0, "seed": seed}
 
-    def students(name, subset, texts, teacher):
+    def students(name, subset, texts, teacher, checkpoint=STUDENT, temperature=TEMPERATURE, alpha=ALPHA):
         for s in SEEDS:
-            runs[f"{name}_s{s}"] = {"model": "student", "subset": subset, "texts": texts, "teacher": teacher, "seed": s}
+            runs[f"{name}_s{s}"] = {
+                "model": "student",
+                "checkpoint": checkpoint,
+                "subset": subset,
+                "texts": texts,
+                "teacher": teacher,
+                "temperature": temperature,
+                "alpha": alpha if teacher else 0.0,
+                "seed": s,
+            }
 
     teacher("p10")
     students("hard_p10", "p10", "subset", None)
@@ -67,6 +80,18 @@ def run_list() -> dict[str, dict]:
     teacher("kc10")
     students("hard_kc10", "kc10", "subset", None)
     students("kdu_kc10", "kc10", "all", "teacher_kc10")
+
+    for s in [1, 2]:
+        teacher("p10", seed=s)
+    for t in [1, 4]:
+        students(f"kdu_p10_t{t}", "p10", "all", "teacher_p10", temperature=float(t))
+    students("kdu_p10_a1", "p10", "all", "teacher_p10", alpha=1.0)
+
+    for checkpoint in LARGER_STUDENTS:
+        size = checkpoint.rsplit("-", 1)[1]
+        students(f"hard_p10_{size}", "p10", "subset", None, checkpoint)
+        students(f"kdu_p10_{size}", "p10", "all", "teacher_p10", checkpoint)
+        students(f"hard_p100_{size}", "p100", "subset", None, checkpoint)
     return runs
 
 
@@ -118,9 +143,9 @@ def metrics(logits: torch.Tensor, labels: np.ndarray) -> dict:
     return {"acc": float((pred == labels).mean()), "f1": float(2 * tp / ((pred == 1).sum() + (labels == 1).sum()))}
 
 
-def train(run: dict, data: dict, models: dict, device) -> tuple[torch.nn.Module, dict]:
+def train(run: dict, data: dict, device) -> tuple[torch.nn.Module, dict]:
     """
-    Fine-tune a classifier, loss = (1 - ALPHA) * CE on gold labels + ALPHA * T^2 * KL(teacher_T || student_T)
+    Fine-tune a classifier, loss = (1 - alpha) * CE on gold labels + alpha * T^2 * KL(teacher_T || student_T)
 
     CE is averaged over the labeled examples of a batch, KL over all of it. Without a teacher the loss is CE only.
     The last checkpoint is evaluated, there is no dev set and no early stopping.
@@ -132,10 +157,10 @@ def train(run: dict, data: dict, models: dict, device) -> tuple[torch.nn.Module,
     gold = torch.full((len(data["pool"]),), -1)
     gold[labeled] = torch.from_numpy(data["pool_labels"][labeled])
     soft = None if run["teacher"] is None else torch.load(RESULTS / "logits" / f"{run['teacher']}.pt")["pool"]
-    alpha = 0.0 if soft is None else ALPHA
+    alpha, temp = run["alpha"], run["temperature"]
 
     hp = HP[run["model"]]
-    model = AutoModelForSequenceClassification.from_pretrained(models[run["model"]], num_labels=2).to(device)
+    model = AutoModelForSequenceClassification.from_pretrained(run["checkpoint"], num_labels=2).to(device)
     steps = max(hp["epochs"] * math.ceil(len(idx) / BATCH), MIN_STEPS)
     opt = torch.optim.AdamW(model.parameters(), lr=hp["lr"], weight_decay=WEIGHT_DECAY)
     sched = get_linear_schedule_with_warmup(opt, int(WARMUP * steps), steps)
@@ -152,9 +177,9 @@ def train(run: dict, data: dict, models: dict, device) -> tuple[torch.nn.Module,
             ce = F.cross_entropy(logits[has], y[has]) if has.any() else logits.new_zeros(())
             loss = (1 - alpha) * ce
             if soft is not None:
-                t = F.log_softmax(soft[b].float().to(device) / TEMPERATURE, -1)
-                s = F.log_softmax(logits / TEMPERATURE, -1)
-                loss = loss + alpha * TEMPERATURE**2 * F.kl_div(s, t, log_target=True, reduction="batchmean")
+                t = F.log_softmax(soft[b].float().to(device) / temp, -1)
+                s = F.log_softmax(logits / temp, -1)
+                loss = loss + alpha * temp**2 * F.kl_div(s, t, log_target=True, reduction="batchmean")
             opt.zero_grad(set_to_none=True)
             scaler.scale(loss).backward()
             scaler.step(opt)
@@ -174,11 +199,11 @@ def train(run: dict, data: dict, models: dict, device) -> tuple[torch.nn.Module,
     return model, info
 
 
-def kcenter(name: str, data: dict, models: dict, device) -> None:
+def kcenter(name: str, data: dict, device) -> None:
     """
     K-center greedy (Sener & Savarese, 2018) on mean-pooled embeddings of the pretrained teacher, cosine distance
     """
-    model = AutoModel.from_pretrained(models["teacher"]).to(device).eval()
+    model = AutoModel.from_pretrained(TEACHER).to(device).eval()
     emb = []
     with torch.no_grad():
         for _, x, m in batches(data["pool"], np.arange(len(data["pool"])), data["pad"], device):
@@ -198,12 +223,12 @@ def kcenter(name: str, data: dict, models: dict, device) -> None:
     np.save(RESULTS / "subsets" / f"{name}.npy", np.sort(np.array(sel)))
 
 
-def bench(data: dict, models: dict, device) -> dict:
+def bench(checkpoints: list[str], data: dict, device) -> dict:
     """
     Parameters, CPU latency of one batch of 32 test sentences (median of 10), GPU throughput on the test set
     """
     out = {}
-    for role, name in models.items():
+    for name in checkpoints:
         model = AutoModelForSequenceClassification.from_pretrained(name, num_labels=2).eval()
         emb = model.get_input_embeddings().weight.numel()
         row = {"model": name, "params": sum(p.numel() for p in model.parameters()), "embedding_params": emb}
@@ -224,7 +249,7 @@ def bench(data: dict, models: dict, device) -> dict:
             predict(model, data["test"], data["pad"], device)
             torch.cuda.synchronize()
             row["gpu_sentences_per_s"] = len(data["test"]) / (time.perf_counter() - t)
-        out[role] = row
+        out[name] = row
     out["cpu_threads"] = torch.get_num_threads()
     return out
 
@@ -239,23 +264,23 @@ def env(device) -> dict:
 
 
 def main() -> None:
-    global RESULTS, SEEDS, MIN_STEPS
+    global RESULTS, SEEDS, MIN_STEPS, TEACHER
     parser = argparse.ArgumentParser()
     parser.add_argument("runs", nargs="*", help="run names, all runs of run_list() if empty")
     parser.add_argument("--max-hours", type=float, default=11.0, help="no run starts after this time")
     parser.add_argument("--smoke", action="store_true", help="2000 train sentences, 17M model as teacher, results_smoke/")
     args = parser.parse_args()
 
-    models = {"teacher": TEACHER, "student": STUDENT}
     limit = None
     if args.smoke:
-        models["teacher"], limit, SEEDS, MIN_STEPS = STUDENT, 2000, [0], 20
+        TEACHER, limit, SEEDS, MIN_STEPS = STUDENT, 2000, [0], 20
         HP["teacher"]["epochs"] = HP["student"]["epochs"] = 1
         RESULTS = RESULTS.with_name("results_smoke")
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     data = load_sst2(AutoTokenizer.from_pretrained(STUDENT), limit)
     runs = run_list()
-    todo = args.runs or list(runs) + ["bench"]
+    benches = {"bench": [TEACHER, STUDENT], "bench_sizes": [TEACHER, STUDENT, *LARGER_STUDENTS]}
+    todo = args.runs or list(runs) + list(benches)
     (RESULTS / "runs").mkdir(parents=True, exist_ok=True)
     (RESULTS / "logits").mkdir(parents=True, exist_ok=True)
 
@@ -269,17 +294,17 @@ def main() -> None:
             print(f"stopped before {name}, {args.max_hours} h passed")
             break
         t = time.time()
-        if name == "bench":
-            result = bench(data, models, device)
+        if name in benches:
+            result = bench(benches[name], data, device)
         else:
             run = runs[name]
             if run["teacher"] and not (RESULTS / "logits" / f"{run['teacher']}.pt").exists():
                 raise SystemExit(f"{name} distills {run['teacher']}, run it first")
             if run["subset"].startswith("kc") and not (RESULTS / "subsets" / f"{run['subset']}.npy").exists():
-                kcenter(run["subset"], data, models, device)
-            model, info = train(run, data, models, device)
+                kcenter(run["subset"], data, device)
+            model, info = train(run, data, device)
             test = predict(model, data["test"], data["pad"], device)
-            result = {**run, "model_name": models[run["model"]], **info, **metrics(test, data["test_labels"])}
+            result = {**run, **info, **metrics(test, data["test_labels"])}
             if run["model"] == "teacher":
                 pool = predict(model, data["pool"], data["pad"], device)
                 result["pool_acc"] = metrics(pool, data["pool_labels"])["acc"]

@@ -37,6 +37,9 @@ Hyperparameters: AdamW, weight decay 0.01, linear warmup over 6% of steps and li
 3. How does the gain change with the label budget? `hard` vs `kdu` at 1%, 5%, 10%, 25%.
 4. Does selecting which 10% to label still matter under KD? `hard_kc10 - hard_p10` vs `kdu_kc10 - kdu_p10`.
 5. What does the student cost compared to the teacher? Parameters, CPU latency for a batch of 32, T4 throughput.
+6. How much does the teacher vary between seeds? `teacher_p10` with seeds 0, 1, 2.
+7. Does the KD gain depend on the temperature and on the CE term? `kdu_p10` at T = 2 vs T = 1 (`_t1`), T = 4 (`_t4`), and alpha = 1, KL only (`_a1`).
+8. Does a larger student close more of the gap to the teacher? `hard_p10`, `kdu_p10`, `hard_p100` with Ettin-encoder-17m, -32m (12.7M parameters outside the embeddings), and -68m (42.6M), same hyperparameters.
 
 A difference counts as a result when it exceeds the sum of the two standard deviations over seeds.
 
