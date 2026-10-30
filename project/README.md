@@ -104,6 +104,7 @@ Hyperparameters were not tuned for any run, and the student LR and epochs are th
 | `results/runs/` | One JSON per run: config, metrics, train time, environment; `bench*.json` for the benchmark |
 | `results/logits/`, `results/subsets/` | Teacher logits on all train sentences, k-center indices |
 | `slides/` | Beamer slides, `latexmk -pdf slides.tex` in that folder |
+| `Dockerfile`, `pyproject.toml`, `uv.lock` | Pinned environment for `kd.py` and `plots.py` |
 | `PLAN.md` | Method, questions, five-day schedule, papers |
 
 ## Reproduce
@@ -122,4 +123,13 @@ uv run python kd.py kdu_p10_s0   # one run
 uv run python plots.py           # results/summary.md, results/figures/
 ```
 
-Environment of the reported runs: Kaggle, Tesla T4, Python 3.13.15, PyTorch 2.11.0+cu128, Transformers 5.16.1.
+Docker, with the versions of `uv.lock` (needs the NVIDIA driver and the NVIDIA Container Toolkit on the host; a run whose file is in the mounted `results/` is skipped):
+
+```
+docker build -t kd-tiny .
+docker run --rm kd-tiny kd.py --smoke                                   # CPU check
+docker run --rm --gpus all -v "$PWD/results:/app/results" kd-tiny kd.py kdu_p10_s0
+docker run --rm -v "$PWD/results:/app/results" kd-tiny plots.py
+```
+
+Environment of the reported runs: Kaggle, Tesla T4, Python 3.13.15, PyTorch 2.11.0+cu128, Transformers 5.16.1. The notebook uses the PyTorch and Transformers preinstalled on Kaggle; `uv.lock` and the Docker image pin PyTorch 2.15.0 and Transformers 5.21.1, which were not used for the reported numbers.
