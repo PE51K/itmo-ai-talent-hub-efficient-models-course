@@ -1,6 +1,6 @@
 # Knowledge distillation into a 17M encoder with 10% of SST-2 labels
 
-A 17M-parameter student distilled from a 400M teacher through all SST-2 train sentences reached 89.7% test accuracy with gold labels for 10% of them, against 84.3% with cross-entropy on the same labels and 89.5% with all labels. Group project of the ITMO "Efficient models" course, defense on 05.12.2026; method, questions, and schedule are in [`PLAN.md`](PLAN.md), slides in [`slides.pdf`](slides.pdf) (source [`slides.tex`](slides.tex), `latexmk -pdf slides.tex`).
+A 17M-parameter student distilled from a 400M teacher through all SST-2 train sentences reached 89.7% test accuracy with gold labels for 10% of them, against 84.3% with cross-entropy on the same labels and 89.5% with all labels. Group project of the ITMO "Efficient models" course, defense on 05.12.2026; method, questions, and schedule are in [`PLAN.md`](PLAN.md), slides in [`slides/slides.pdf`](slides/slides.pdf).
 
 ## Setup
 
@@ -92,6 +92,18 @@ CPU latency is the median of 10 forward passes over 32 test sentences with 2 PyT
 ## Limits
 
 Hyperparameters were not tuned for any run, and the student LR and epochs are those of the 17M student for all sizes. Only `teacher_p10` ran with 3 seeds; differences between other teachers below about 1 point are not results. CE with all labels gave the 17M and 32M students the same 89.5-89.6%; whether this is a limit of the recipe was not tested.
+
+## Files
+
+| Path | Content |
+|---|---|
+| `kd.py` | Data, training, KD loss, k-center, benchmark, the list of runs |
+| `plots.py` | `results/summary.md` and `results/figures/label_curve.png` from the run files |
+| `kd_kaggle.ipynb` | Runs `kd.py` on a Kaggle or Colab T4, resumes from earlier results, zips `results/` |
+| `results/runs/` | One JSON per run: config, metrics, train time, environment; `bench*.json` for the benchmark |
+| `results/logits/`, `results/subsets/` | Teacher logits on all train sentences, k-center indices |
+| `slides/` | Beamer slides, `latexmk -pdf slides.tex` in that folder |
+| `PLAN.md` | Method, questions, five-day schedule, papers |
 
 ## Reproduce
 
