@@ -53,10 +53,10 @@
     \item Train the student with knowledge distillation (KD) on the labeled part only, and on all 67,349 sentences
     \item Replace the random 10\,\% by k-center selection
     \item Measure parameters, CPU latency, T4 throughput
-    \item Vary the KD temperature and weight; repeat with 32M and 68M students; 3 teacher seeds at 10\,\%
+    \item Vary the KD temperature and weight; repeat with 32M and 68M students; 3 teacher seeds at 10\,\%, a KD student from each
   \end{enumerate}
   \medskip
-  Budget: 5 days, Kaggle T4 sessions of 12 hours; the 74 runs took 197 + 199 min in two sessions on one T4.
+  Budget: 5 days, Kaggle T4 sessions of 12 hours; the 83 runs took 197 + 199 + 45 min in three sessions on one T4.
 \end{frame}
 
 \begin{frame}{Knowledge distillation (Hinton et al., 2015)}
@@ -168,7 +168,7 @@
       \item \texttt{kdu}: CE on the labeled sentences, KL on all
       \item GLUE SST-2; the validation split (872) is the test set, no dev set, last step evaluated
       \item $T = 2$, $\alpha = 0.5$; AdamW, batch 32, fp16; teacher LR 3e-5, 3 epochs; student LR 1e-4, 5 epochs
-      \item Students: 3 seeds, all from the seed-0 teacher; teachers: 1 seed, \texttt{teacher\_p10}: 3
+      \item Students: 3 seeds, from the seed-0 teacher; teachers: 1 seed, \texttt{teacher\_p10}: 3
     \end{itemize}
   \end{columns}
 \end{frame}
@@ -207,7 +207,7 @@
       \item \texttt{kdu\_p10} gained 3.8 points over \texttt{hard\_p10}, 72\,\% of the 5.2-point gap to \texttt{hard\_p100}
       \item The gain came from the 90\,\% without labels: KD on the labeled 10\,\% alone was within the seed spread of CE
       \item With all labels, KD from a 95.9\,\% teacher did not raise the student
-      \item Teacher seeds: 93.7, 94.8, 93.7\,\%; the students distill from the first one
+      \item Teacher seeds: 93.7, 94.8, 93.7\,\%; KD students from them: 88.1, 88.6, 88.4\,\%
     \end{itemize}
   \end{columns}
 \end{frame}
@@ -224,6 +224,7 @@
       \texttt{kdu\_p10} & 2 & 0.5 & 88.1 $\pm$ 0.2 \\
       \texttt{kdu\_p10\_t4} & 4 & 0.5 & 88.8 $\pm$ 0.2 \\
       \texttt{kdu\_p10\_a1} & 2 & 1 & 89.7 $\pm$ 0.3 \\
+      \texttt{kdu\_p10\_t4a1} & 4 & 1 & 89.3 $\pm$ 0.3 \\
       \texttt{hard\_p100} & & 0 & 89.5 $\pm$ 0.6 \\
       \bottomrule
     \end{tabular}
@@ -235,7 +236,7 @@
       \item The student saw the gold labels only through a teacher trained on 10\,\% of them
       \item Each step of $T$ from 1 to 2 to 4 added 0.7 points
       \item Tang et al.\ also found the distillation term alone best
-      \item $T = 4$ with $\alpha = 1$ was not run
+      \item With $\alpha = 1$, $T = 4$ did not help: $-0.4$, within the spread
     \end{itemize}
   \end{columns}
 \end{frame}
@@ -380,7 +381,7 @@
   \medskip
   Next steps:
   \begin{itemize}
-    \item $T = 4$ with $\alpha = 1$, at every label share and student size
+    \item KL only ($\alpha = 1$) at every label share and student size
     \item Tune the student's LR and epochs on a dev split carved from the labeled 10\,\%
     \item Augmented or out-of-domain transfer sets; Docker image with pinned versions
   \end{itemize}

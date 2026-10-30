@@ -15,7 +15,7 @@ Knowledge distillation (KD, [Hinton et al., 2015](https://arxiv.org/abs/1503.025
 | `kd_p<p>` | p% labeled sentences | CE + KL from `teacher_p<p>` |
 | `kdu_p<p>` | all 67,349 sentences, p% of them labeled | CE where labeled + KL from `teacher_p<p>` everywhere |
 
-`kc10` in place of `p10` is a 10% chosen by k-center greedy ([Sener & Savarese, 2018](https://arxiv.org/abs/1708.00489)) on mean-pooled embeddings of the pretrained teacher. Suffixes `_t1`, `_t4` set `T = 1`, `T = 4`; `_a1` sets `a = 1` (KL only); `_32m`, `_68m` replace the student by Ettin-encoder-32m or -68m. Hyperparameters are fixed, with no dev set: AdamW, batch 32, fp16; teacher LR 3e-5 for 3 epochs, student LR 1e-4 for 5 epochs, at least 300 steps. Students ran with 3 seeds; teachers with 1, except `teacher_p10` with 3. All students distill from the seed-0 teacher. The 74 runs and two benchmarks took 197 + 199 min in two sessions on one Kaggle T4.
+`kc10` in place of `p10` is a 10% chosen by k-center greedy ([Sener & Savarese, 2018](https://arxiv.org/abs/1708.00489)) on mean-pooled embeddings of the pretrained teacher. Suffixes `_t1`, `_t4` set `T = 1`, `T = 4`; `_a1` sets `a = 1` (KL only), `_t4a1` both; `_ts1`, `_ts2` distill from the teacher of seed 1 or 2; `_32m`, `_68m` replace the student by Ettin-encoder-32m or -68m. Hyperparameters are fixed, with no dev set: AdamW, batch 32, fp16; teacher LR 3e-5 for 3 epochs, student LR 1e-4 for 5 epochs, at least 300 steps. Students ran with 3 seeds; teachers with 1, except `teacher_p10` with 3. Students distill from the seed-0 teacher unless named `_ts1` or `_ts2`. The 83 runs and two benchmarks took 197 + 199 + 45 min in three sessions on one Kaggle T4.
 
 ## KD on unlabeled sentences closes 72% of the gap at 10% labels
 
@@ -30,7 +30,7 @@ Knowledge distillation (KD, [Hinton et al., 2015](https://arxiv.org/abs/1503.025
 
 Mean ± sample standard deviation over 3 seeds; full table in [`results/summary.md`](results/summary.md), per-run files in [`results/runs/`](results/runs).
 
-`kdu_p10` gained 3.8 points over `hard_p10`, 72% of the 5.2-point gap to `hard_p100`. The gain came from the 90% of sentences without gold labels: KD on the labeled 10% alone (`kd_p10`) was within the seed spread of `hard_p10`. With all labels, KD from `teacher_p100` (95.9%) did not raise the student either: `kd_p100` and `hard_p100` differ by 0.5 points, less than the sum of their standard deviations. The three `teacher_p10` seeds scored 93.7, 94.8, and 93.7%; the seed-0 teacher that all students distill from is 5.6 points above `kdu_p10`.
+`kdu_p10` gained 3.8 points over `hard_p10`, 72% of the 5.2-point gap to `hard_p100`. The gain came from the 90% of sentences without gold labels: KD on the labeled 10% alone (`kd_p10`) was within the seed spread of `hard_p10`. With all labels, KD from `teacher_p100` (95.9%) did not raise the student either: `kd_p100` and `hard_p100` differ by 0.5 points, less than the sum of their standard deviations. The three `teacher_p10` seeds scored 93.7, 94.8, and 93.7%; students distilled from them scored 88.1 ± 0.2, 88.6 ± 0.4, and 88.4 ± 0.7%, so the teacher seed moved `kdu_p10` by at most 0.5 points. Over all 9 runs `kdu_p10` is 88.4 ± 0.5%, 77% of the gap.
 
 ## Without the CE term, KD with 10% of the labels matched CE with all labels
 
@@ -40,9 +40,10 @@ Mean ± sample standard deviation over 3 seeds; full table in [`results/summary.
 | `kdu_p10` | 2 | 0.5 | 88.1 ± 0.2 |
 | `kdu_p10_t4` | 4 | 0.5 | 88.8 ± 0.2 |
 | `kdu_p10_a1` | 2 | 1 | 89.7 ± 0.3 |
+| `kdu_p10_t4a1` | 4 | 1 | 89.3 ± 0.3 |
 | `hard_p100` | | 0 | 89.5 ± 0.6 |
 
-Dropping the CE term on the 6,735 gold labels raised the student by 1.6 points, to within the seed spread of `hard_p100`: trained only on the soft labels of a teacher that saw 10% of the gold labels, the student matched the student trained on all of them. Each step of the temperature from 1 to 2 to 4 added 0.7 points, more than the sum of the standard deviations. `T = 4` and `a = 1` were not combined, and neither was run at other label shares or student sizes.
+Dropping the CE term on the 6,735 gold labels raised the student by 1.6 points, to within the seed spread of `hard_p100`: trained only on the soft labels of a teacher that saw 10% of the gold labels, the student matched the student trained on all of them. Each step of the temperature from 1 to 2 to 4 added 0.7 points, more than the sum of the standard deviations. With `a = 1`, raising the temperature to 4 did not help: `kdu_p10_t4a1` is 0.4 points below `kdu_p10_a1`, less than the sum of their standard deviations. Neither setting was run at other label shares or student sizes.
 
 ## With KD, 5% of the labels beat 25% without it
 

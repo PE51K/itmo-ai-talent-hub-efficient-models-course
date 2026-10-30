@@ -8,6 +8,9 @@
 | Student, KD on all texts, 10% labels, T = 1 | `kdu_p10_t1` | 87.4 ± 0.3 | 87.8 ± 0.4 | 3 |
 | Student, KD on all texts, 10% labels, T = 4 | `kdu_p10_t4` | 88.8 ± 0.2 | 89.2 ± 0.2 | 3 |
 | Student, KD on all texts, 10% labels, KL only | `kdu_p10_a1` | 89.7 ± 0.3 | 90.0 ± 0.3 | 3 |
+| Student, KD on all texts, 10% labels, T = 4, KL only | `kdu_p10_t4a1` | 89.3 ± 0.3 | 89.7 ± 0.3 | 3 |
+| Student, KD on all texts, 10% labels, teacher seed 1 | `kdu_p10_ts1` | 88.6 ± 0.4 | 89.0 ± 0.4 | 3 |
+| Student, KD on all texts, 10% labels, teacher seed 2 | `kdu_p10_ts2` | 88.4 ± 0.7 | 88.8 ± 0.6 | 3 |
 | Student, CE, k-center 10% | `hard_kc10` | 79.1 ± 1.0 | 79.2 ± 1.2 | 3 |
 | Student, KD on all texts, k-center 10% | `kdu_kc10` | 86.7 ± 0.3 | 87.0 ± 0.3 | 3 |
 | Student, CE, 100% labels | `hard_p100` | 89.5 ± 0.6 | 89.8 ± 0.5 | 3 |
