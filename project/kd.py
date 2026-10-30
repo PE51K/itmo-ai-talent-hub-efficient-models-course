@@ -36,7 +36,7 @@ RESULTS = Path(__file__).parent / "results"
 def run_list() -> dict[str, dict]:
     """
     All runs in execution order: the 10% table, KD with full labels, the label curve, k-center,
-    then teacher seeds, KD temperature and weight, and larger students
+    then teacher seeds, KD temperature and weight, larger students, and KD from the other teacher seeds
 
     A run is {model, checkpoint, subset, texts, teacher, temperature, alpha, seed}:
         model: "teacher" or "student", selects the hyperparameters in HP
@@ -92,6 +92,10 @@ def run_list() -> dict[str, dict]:
         students(f"hard_p10_{size}", "p10", "subset", None, checkpoint)
         students(f"kdu_p10_{size}", "p10", "all", "teacher_p10", checkpoint)
         students(f"hard_p100_{size}", "p100", "subset", None, checkpoint)
+
+    for s in [1, 2]:
+        students(f"kdu_p10_ts{s}", "p10", "all", f"teacher_p10_s{s}")
+    students("kdu_p10_t4a1", "p10", "all", "teacher_p10", temperature=4.0, alpha=1.0)
     return runs
 
 

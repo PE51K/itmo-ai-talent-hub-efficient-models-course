@@ -1,0 +1,23 @@
+{
+ "model": "student",
+ "checkpoint": "jhu-clsp/ettin-encoder-68m",
+ "subset": "p10",
+ "texts": "subset",
+ "teacher": null,
+ "temperature": 2.0,
+ "alpha": 0.0,
+ "seed": 1,
+ "steps": 1055,
+ "n_labeled": 6735,
+ "n_texts": 6735,
+ "labeled_positive": 0.5517446176688938,
+ "train_time": 86.34252572059631,
+ "acc": 0.8944954128440367,
+ "f1": 0.8991228070175439,
+ "env": {
+  "torch": "2.11.0+cu128",
+  "transformers": "5.16.1",
+  "python": "3.13.15",
+  "device": "Tesla T4"
+ }
+}

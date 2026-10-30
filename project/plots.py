@@ -16,6 +16,9 @@ ROWS = [
     ("kdu_p10_t1", "Student, KD on all texts, 10% labels, T = 1"),
     ("kdu_p10_t4", "Student, KD on all texts, 10% labels, T = 4"),
     ("kdu_p10_a1", "Student, KD on all texts, 10% labels, KL only"),
+    ("kdu_p10_t4a1", "Student, KD on all texts, 10% labels, T = 4, KL only"),
+    ("kdu_p10_ts1", "Student, KD on all texts, 10% labels, teacher seed 1"),
+    ("kdu_p10_ts2", "Student, KD on all texts, 10% labels, teacher seed 2"),
     ("hard_kc10", "Student, CE, k-center 10%"),
     ("kdu_kc10", "Student, KD on all texts, k-center 10%"),
     ("hard_p100", "Student, CE, 100% labels"),
@@ -76,7 +79,7 @@ def bench_table(results: Path) -> str:
 def curve(groups: dict, out: Path) -> None:
     fig, ax = plt.subplots(figsize=(6, 4))
     for prefix, label in [("teacher", "Teacher, CE"), ("hard", "Student, CE"), ("kdu", "Student, KD on all texts")]:
-        xs, means, stds = [], [], []
+        xs, means, stds, single = [], [], [], []
         for p in CURVE:
             runs = groups.get(f"{prefix}_p{p}")
             if runs and not (prefix == "kdu" and p == 100):
@@ -84,14 +87,20 @@ def curve(groups: dict, out: Path) -> None:
                 xs.append(p)
                 means.append(acc.mean())
                 stds.append(acc.std(ddof=1) if len(acc) > 1 else 0)
-        if xs:
-            ax.errorbar(xs, means, yerr=stds, marker="o", capsize=3, label=label)
+                single.append(len(acc) == 1)
+        if not xs:
+            continue
+        line = ax.errorbar(xs, means, yerr=stds, marker="o", ms=4, capsize=4, elinewidth=1.5, label=label)
+        # one-seed points have no spread to show
+        ax.plot([x for x, s in zip(xs, single) if s], [m for m, s in zip(means, single) if s], "o", ms=6, mfc="white", c=line[0].get_color(), zorder=4)
     if "kd_p100" in groups:
         ax.axhline(np.mean([r["acc"] for r in groups["kd_p100"]]) * 100, ls="--", c="gray", label="Student, KD, 100% labels")
+    ax.plot([], [], "o", ms=6, mfc="white", c="gray", label="1 seed, no error bar")
     ax.set_xscale("log")
     ax.set_xticks(CURVE, [f"{p}%" for p in CURVE])
     ax.set_xlabel("Labeled share of the SST-2 train set")
     ax.set_ylabel("SST-2 validation accuracy, %")
+    ax.set_title("Mean ± std over 3 seeds", fontsize=9)
     ax.grid(alpha=0.3)
     ax.legend()
     fig.tight_layout()

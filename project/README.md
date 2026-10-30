@@ -1,12 +1,12 @@
 # Knowledge distillation into a 17M encoder with 10% of SST-2 labels
 
-A 17M-parameter student distilled from a 400M teacher through all SST-2 train sentences reached 88.1% test accuracy with gold labels for 10% of them, against 84.3% with cross-entropy on the same labels and 89.5% with all labels. Group project of the ITMO "Efficient models" course, defense on 05.12.2026; method, questions, and schedule are in [`PLAN.md`](PLAN.md).
+A 17M-parameter student distilled from a 400M teacher through all SST-2 train sentences reached 89.7% test accuracy with gold labels for 10% of them, against 84.3% with cross-entropy on the same labels and 89.5% with all labels. Group project of the ITMO "Efficient models" course, defense on 05.12.2026; method, questions, and schedule are in [`PLAN.md`](PLAN.md), slides in [`slides.pdf`](slides.pdf) (source [`slides.tex`](slides.tex), `latexmk -pdf slides.tex`).
 
 ## Setup
 
 The teacher is [Ettin-encoder-400m](https://huggingface.co/jhu-clsp/ettin-encoder-400m), the student [Ettin-encoder-17m](https://huggingface.co/jhu-clsp/ettin-encoder-17m): ModernBERT-architecture encoders from one pretraining recipe with one tokenizer ([Weller et al., 2025](https://arxiv.org/abs/2507.11412)). The task is GLUE SST-2 (binary sentiment, 67,349 train sentences); the GLUE validation split (872 sentences) is the test set. A random p% of the train set has gold labels; the random subsets are nested.
 
-Knowledge distillation (KD, [Hinton et al., 2015](https://arxiv.org/abs/1503.02531)) trains the student on `0.5 * CE(student, gold) + 0.5 * T^2 * KL(teacher_T || student_T)` with temperature `T = 2`, where CE (cross-entropy) is averaged over the examples that have a gold label. Run names:
+Knowledge distillation (KD, [Hinton et al., 2015](https://arxiv.org/abs/1503.02531)) trains the student on `(1 - a) * CE(student, gold) + a * T^2 * KL(teacher_T || student_T)`, where CE (cross-entropy) is averaged over the examples that have a gold label. By default `a = 0.5` and temperature `T = 2`. Run names:
 
 | Run | Student training data | Loss |
 |---|---|---|
@@ -15,13 +15,13 @@ Knowledge distillation (KD, [Hinton et al., 2015](https://arxiv.org/abs/1503.025
 | `kd_p<p>` | p% labeled sentences | CE + KL from `teacher_p<p>` |
 | `kdu_p<p>` | all 67,349 sentences, p% of them labeled | CE where labeled + KL from `teacher_p<p>` everywhere |
 
-`kc10` in place of `p10` is a 10% chosen by k-center greedy ([Sener & Savarese, 2018](https://arxiv.org/abs/1708.00489)) on mean-pooled embeddings of the pretrained teacher. Hyperparameters are fixed, with no dev set: AdamW, batch 32, fp16; teacher LR 3e-5 for 3 epochs, student LR 1e-4 for 5 epochs, at least 300 steps. Students ran with 3 seeds, teachers with 1. All 45 runs and the benchmark took 197 min on one Kaggle T4.
+`kc10` in place of `p10` is a 10% chosen by k-center greedy ([Sener & Savarese, 2018](https://arxiv.org/abs/1708.00489)) on mean-pooled embeddings of the pretrained teacher. Suffixes `_t1`, `_t4` set `T = 1`, `T = 4`; `_a1` sets `a = 1` (KL only); `_32m`, `_68m` replace the student by Ettin-encoder-32m or -68m. Hyperparameters are fixed, with no dev set: AdamW, batch 32, fp16; teacher LR 3e-5 for 3 epochs, student LR 1e-4 for 5 epochs, at least 300 steps. Students ran with 3 seeds; teachers with 1, except `teacher_p10` with 3. All students distill from the seed-0 teacher. The 74 runs and two benchmarks took 197 + 199 min in two sessions on one Kaggle T4.
 
 ## KD on unlabeled sentences closes 72% of the gap at 10% labels
 
 | Run | Test accuracy, % | F1, % |
 |---|---|---|
-| `teacher_p10` | 93.7 | 93.8 |
+| `teacher_p10` | 94.1 ± 0.7 | 94.2 ± 0.6 |
 | `hard_p10` | 84.3 ± 1.3 | 84.7 ± 1.2 |
 | `kd_p10` | 84.1 ± 0.6 | 84.7 ± 0.5 |
 | `kdu_p10` | 88.1 ± 0.2 | 88.4 ± 0.1 |
@@ -30,7 +30,19 @@ Knowledge distillation (KD, [Hinton et al., 2015](https://arxiv.org/abs/1503.025
 
 Mean ± sample standard deviation over 3 seeds; full table in [`results/summary.md`](results/summary.md), per-run files in [`results/runs/`](results/runs).
 
-`kdu_p10` gained 3.8 points over `hard_p10`, 72% of the 5.2-point gap to `hard_p100`. The gain came from the 90% of sentences without gold labels: KD on the labeled 10% alone (`kd_p10`) was within the seed spread of `hard_p10`. With all labels, KD from `teacher_p100` (95.9%) did not raise the student either: `kd_p100` and `hard_p100` differ by 0.5 points, less than the sum of their standard deviations. The student stayed 5.6 points below its teacher at 10% labels and 6.4 points below at 100%.
+`kdu_p10` gained 3.8 points over `hard_p10`, 72% of the 5.2-point gap to `hard_p100`. The gain came from the 90% of sentences without gold labels: KD on the labeled 10% alone (`kd_p10`) was within the seed spread of `hard_p10`. With all labels, KD from `teacher_p100` (95.9%) did not raise the student either: `kd_p100` and `hard_p100` differ by 0.5 points, less than the sum of their standard deviations. The three `teacher_p10` seeds scored 93.7, 94.8, and 93.7%; the seed-0 teacher that all students distill from is 5.6 points above `kdu_p10`.
+
+## Without the CE term, KD with 10% of the labels matched CE with all labels
+
+| Run | `T` | `a` | Test accuracy, % |
+|---|---|---|---|
+| `kdu_p10_t1` | 1 | 0.5 | 87.4 ± 0.3 |
+| `kdu_p10` | 2 | 0.5 | 88.1 ± 0.2 |
+| `kdu_p10_t4` | 4 | 0.5 | 88.8 ± 0.2 |
+| `kdu_p10_a1` | 2 | 1 | 89.7 ± 0.3 |
+| `hard_p100` | | 0 | 89.5 ± 0.6 |
+
+Dropping the CE term on the 6,735 gold labels raised the student by 1.6 points, to within the seed spread of `hard_p100`: trained only on the soft labels of a teacher that saw 10% of the gold labels, the student matched the student trained on all of them. Each step of the temperature from 1 to 2 to 4 added 0.7 points, more than the sum of the standard deviations. `T = 4` and `a = 1` were not combined, and neither was run at other label shares or student sizes.
 
 ## With KD, 5% of the labels beat 25% without it
 
@@ -40,11 +52,21 @@ Mean ± sample standard deviation over 3 seeds; full table in [`results/summary.
 |---|---|---|---|
 | 1% (673 sentences) | 87.6 | 73.4 ± 3.4 | 84.3 ± 0.5 |
 | 5% (3,367) | 94.0 | 81.5 ± 0.8 | 88.3 ± 0.3 |
-| 10% (6,735) | 93.7 | 84.3 ± 1.3 | 88.1 ± 0.2 |
+| 10% (6,735) | 94.1 ± 0.7 | 84.3 ± 1.3 | 88.1 ± 0.2 |
 | 25% (16,837) | 95.1 | 86.7 ± 0.8 | 89.2 ± 0.4 |
 | 100% (67,349) | 95.9 | 89.5 ± 0.6 | |
 
-KD on all sentences with 1% of the labels matched CE with 10% (84.3% both), and with 5% it exceeded CE with 25% (88.3% vs 86.7%). The KD gain shrank from 10.9 points at 1% to 2.6 points at 25%. At 25% the KD student (89.2%) was within the seed spread of the student trained with CE on all labels (89.5%). The seed spread of the KD student was 0.2-0.5 points at every share, against 0.6-3.4 for CE. Teacher numbers are single runs: `teacher_p5` scored above `teacher_p10` by 0.3 points.
+`kdu` runs use `T = 2`, `a = 0.5`. KD on all sentences with 1% of the labels matched CE with 10% (84.3% both), and with 5% it exceeded CE with 25% (88.3% vs 86.7%). The KD gain shrank from 10.9 points at 1% to 2.6 points at 25%. At 25% the KD student (89.2%) was within the seed spread of the student trained with CE on all labels (89.5%). The seed spread of the KD student was 0.2-0.5 points at every share, against 0.6-3.4 for CE. Teachers other than `teacher_p10` are single runs, and the `teacher_p10` seeds span 1.1 points, so `teacher_p5` scoring 0.1 points below their mean is not a result.
+
+## A larger student gains less from KD
+
+| Student | `hard_p10`, % | `kdu_p10`, % | `hard_p100`, % | Gap closed |
+|---|---|---|---|---|
+| Ettin-encoder-17m | 84.3 ± 1.3 | 88.1 ± 0.2 | 89.5 ± 0.6 | 72% |
+| Ettin-encoder-32m | 88.0 ± 1.0 | 90.2 ± 0.5 | 89.6 ± 0.9 | over 100% |
+| Ettin-encoder-68m | 89.6 ± 0.4 | 91.1 ± 0.4 | 92.4 ± 0.7 | 54% |
+
+All with `T = 2`, `a = 0.5`. The KD gain at 10% labels fell from 3.8 points for the 17M student to 2.2 for 32M and 1.5 for 68M, while CE with 10% of the labels rose from 84.3 to 89.6%. For the 32M student, KD with 10% of the labels was within the seed spread of CE with all labels, as for the 17M student with `a = 1`. CE with all labels gave 17M and 32M the same accuracy (89.5 and 89.6%) and 68M 2.8 points more.
 
 ## K-center selection of the 10% lowered accuracy
 
@@ -54,20 +76,22 @@ KD on all sentences with 1% of the labels matched CE with 10% (84.3% both), and 
 | `hard` | 84.3 ± 1.3 | 79.1 ± 1.0 |
 | `kdu` | 88.1 ± 0.2 | 86.7 ± 0.3 |
 
-K-center selection cost the CE student 5.2 points and the KD student 1.4 points. The k-center subset had 57.3% positive labels against 55.2% in the random subset and 55.8% in the full train set.
+Teachers: seed 0. K-center selection cost the CE student 5.2 points and the KD student 1.4 points. The k-center subset had 57.3% positive labels against 55.2% in the random subset and 55.8% in the full train set.
 
-## The student is 65 times faster than the teacher on CPU
+## The student is 63 times faster than the teacher on CPU
 
 | Model | Parameters, M | Without embeddings, M | CPU, batch of 32, ms | T4 fp16, sentences/s |
 |---|---|---|---|---|
-| Ettin-encoder-400m | 395.8 | 344.3 | 6,042 | 312 |
-| Ettin-encoder-17m | 16.9 | 4.0 | 93 | 3,350 |
+| Ettin-encoder-400m | 395.8 | 344.3 | 5,817 | 314 |
+| Ettin-encoder-68m | 68.4 | 42.6 | 736 | 1,278 |
+| Ettin-encoder-32m | 32.0 | 12.7 | 237 | 2,423 |
+| Ettin-encoder-17m | 16.9 | 4.0 | 92 | 3,243 |
 
-CPU latency is the median of 10 forward passes over 32 test sentences with 2 PyTorch threads on a Kaggle CPU; T4 throughput is measured on the 872 test sentences ([`results/runs/bench.json`](results/runs/bench.json)). The student has 23 times fewer parameters and 86 times fewer outside the embedding matrix.
+CPU latency is the median of 10 forward passes over 32 test sentences with 2 PyTorch threads on a Kaggle CPU; T4 throughput is measured on the 872 test sentences ([`results/runs/bench_sizes.json`](results/runs/bench_sizes.json)). The 17M student has 23 times fewer parameters than the teacher and 86 times fewer outside the embedding matrix; the 68M student is 8 times slower than the 17M one on CPU.
 
 ## Limits
 
-Hyperparameters were not tuned for any run, and `T = 2`, `a = 0.5` were not varied. Teachers ran with one seed, so differences between teachers below 1 point are not results. Whether the student's 89.5% with all labels is the limit of a 17M encoder on SST-2 or of the training recipe was not tested.
+Hyperparameters were not tuned for any run, and the student LR and epochs are those of the 17M student for all sizes. Only `teacher_p10` ran with 3 seeds; differences between other teachers below about 1 point are not results. CE with all labels gave the 17M and 32M students the same 89.5-89.6%; whether this is a limit of the recipe was not tested.
 
 ## Reproduce
 
