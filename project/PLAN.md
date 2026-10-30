@@ -13,7 +13,7 @@ The budget is gold labels for 10% of the SST-2 train set (6,735 of 67,349 senten
 | Teacher | [`jhu-clsp/ettin-encoder-400m`](https://huggingface.co/jhu-clsp/ettin-encoder-400m) | 400M |
 | Student | [`jhu-clsp/ettin-encoder-17m`](https://huggingface.co/jhu-clsp/ettin-encoder-17m) | 17M, of them 12.9M in the embedding matrix |
 
-Both are Ettin encoders ([Weller et al., 2025](https://arxiv.org/abs/2507.11412)): the ModernBERT architecture ([Warner et al., 2024](https://arxiv.org/abs/2412.13663)) trained with one recipe and one tokenizer at sizes from 17M to 1B. The 1B encoder does not fit a T4 for fine-tuning with AdamW in fp16.
+Both are Ettin encoders ([Weller et al., 2025](https://arxiv.org/abs/2507.11412)): the ModernBERT architecture ([Warner et al., 2024](https://arxiv.org/abs/2412.13663)) trained with one recipe and one tokenizer at sizes from 17M to 1B. By estimate, the 1B encoder does not fit a T4 for fine-tuning: fp32 weights, gradients, and the two AdamW moments take 16 bytes per parameter, 16 GB for 1B parameters, and a T4 has 16 GB in total.
 
 The student loss is `(1 - a) * CE(student, gold) + a * T^2 * KL(teacher_T || student_T)` with `a = 0.5` and temperature `T = 2`; CE (cross-entropy) is averaged over the examples of a batch that have a gold label, KL over all of them. Without a teacher, `a = 0`.
 
@@ -51,7 +51,7 @@ A difference counts as a result when it exceeds the sum of the two standard devi
 | `plots.py` | `results/summary.md` (mean ± std per config) and `results/figures/label_curve.png`. |
 | `kd_kaggle.ipynb` | Runs `kd.py` on Kaggle or Colab, resumes from earlier results, zips `results/`. |
 
-`uv run python kd.py --smoke` checks the whole pipeline on CPU in a few minutes: 2,000 train sentences, the 17M model as its own teacher, one seed, results in `results_smoke/`.
+`uv run python kd.py --smoke` checks the whole pipeline on CPU (13 min in the Docker image on an Apple-silicon Mac): 2,000 train sentences, the 17M model as its own teacher, one seed, results in `results_smoke/`.
 
 ## Five days
 
@@ -63,7 +63,7 @@ Day 3. Answer questions 1-5 from `results/summary.md` and the label curve. Write
 
 Day 4. Slides: motivation, the method with the loss, the papers, setup, the 10% table, the label curve, selection under KD, cost of teacher vs student, conclusions, next steps. Compare with the 2025 projects on the same task (table below).
 
-Day 5. Dockerfile with versions pinned from `uv.lock`. Rerun `teacher_p10`, `hard_p10_s0`, `kdu_p10_s0` from the README instructions in a clean Kaggle session and check the numbers match within the seed spread. Rehearse the talk to 10 minutes.
+Day 5. Dockerfile with versions pinned from `uv.lock`. Rerun `teacher_p10`, `hard_p10_s0`, `kdu_p10_s0` from the README instructions in a clean Kaggle session with `FROM_REPO = False` and check the numbers match within the seed spread. Rehearse the talk to 10 minutes.
 
 ## Previous projects on SST-2 with a 10% budget
 

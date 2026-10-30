@@ -82,7 +82,7 @@ def curve(groups: dict, out: Path) -> None:
         xs, means, stds, single = [], [], [], []
         for p in CURVE:
             runs = groups.get(f"{prefix}_p{p}")
-            if runs and not (prefix == "kdu" and p == 100):
+            if runs:
                 acc = np.array([r["acc"] for r in runs]) * 100
                 xs.append(p)
                 means.append(acc.mean())

@@ -109,7 +109,7 @@ Hyperparameters were not tuned for any run, and the student LR and epochs are th
 
 ## Reproduce
 
-Kaggle: open [`kd_kaggle.ipynb`](https://kaggle.com/kernels/welcome?src=https://github.com/PE51K/itmo-ai-talent-hub-efficient-models-course/blob/main/project/kd_kaggle.ipynb) with a GPU and internet on, then Save Version -> Save & Run All. The notebook describes how to resume a stopped version from its output.
+Kaggle: open [`kd_kaggle.ipynb`](https://kaggle.com/kernels/welcome?src=https://github.com/PE51K/itmo-ai-talent-hub-efficient-models-course/blob/main/project/kd_kaggle.ipynb) with a GPU and internet on, then Save Version -> Save & Run All. The notebook starts from the committed results, so it reruns a run only with `FROM_REPO = False` in its settings cell; it describes how to resume a stopped version from its output.
 
 Colab, one T4: [`kd_kaggle.ipynb`](https://colab.research.google.com/github/PE51K/itmo-ai-talent-hub-efficient-models-course/blob/main/project/kd_kaggle.ipynb).
 

@@ -314,8 +314,7 @@ def main() -> None:
                 result["pool_acc"] = metrics(pool, data["pool_labels"])["acc"]
                 torch.save({"pool": pool.half(), "test": test.half()}, RESULTS / "logits" / f"{name}.pt")
             del model
-            if device.type == "cuda":
-                torch.cuda.empty_cache()
+            torch.cuda.empty_cache()
         result["env"] = env(device)
         path.write_text(json.dumps(result, indent=1))
         print(f"{name}: {', '.join(f'{k} {result[k]:.4f}' for k in ['acc', 'f1'] if k in result)} in {time.time() - t:.0f} s, total {(time.time() - start) / 60:.0f} min", flush=True)
