@@ -1,0 +1,29 @@
+--- a/project/kd.py
++++ b/project/kd.py
+@@ -83,6 +83,11 @@
+ 
+     for s in [1, 2]:
+         teacher("p10", seed=s)
++    # Replicate single-seed teacher runs so the label-curve error bars
++    # describe training-seed variability at every labeled-data share.
++    for subset_name in ["p1", "p5", "p25", "p100", "kc10"]:
++        for s in [1, 2]:
++            teacher(subset_name, seed=s)
+     for t in [1, 4]:
+         students(f"kdu_p10_t{t}", "p10", "all", "teacher_p10", temperature=float(t))
+     students("kdu_p10_a1", "p10", "all", "teacher_p10", alpha=1.0)
+--- a/project/plots.py
++++ b/project/plots.py
+@@ -8,8 +8,12 @@
+ 
+ 
+ ROWS = [
++    ("teacher_p1", "Teacher, 1% labels"),
++    ("teacher_p5", "Teacher, 5% labels"),
+     ("teacher_p10", "Teacher, 10% labels"),
++    ("teacher_p25", "Teacher, 25% labels"),
+     ("teacher_p100", "Teacher, 100% labels"),
++    ("teacher_kc10", "Teacher, k-center 10% labels"),
+     ("hard_p10", "Student, CE, 10% labels"),
+     ("kd_p10", "Student, KD on the 10%"),
+     ("kdu_p10", "Student, KD on all texts, 10% labels"),
